@@ -12,7 +12,7 @@
 | 首工程 | [`projects/demo`](projects/demo) — `common` 日志 / 命令骨架 |
 | 烧录 | **SWD** → J-Link（命令保留；**本阶段不强制实测**） |
 | 串口 | 日志/命令用；默认不烧录 |
-| 骨架阶段不做 / 暂缓 | 上板 flash 验证、MCUBoot / OTA、BLE、`cbb`、WSL、`nrf monitor` |
+| 骨架阶段不做 / 暂缓 | 上板 flash 验证、MCUBoot / OTA、BLE、WSL、`nrf monitor` |
 
 ## 和 STM32 / TM4C 的差别（避免套错习惯）
 
@@ -34,6 +34,7 @@ nRF54L15/
 ├── boards/            # 自有板 Zephyr board / overlay（待补）
 ├── common/            # 多工程共享源码（无 Zephyr 封装）
 ├── modules/           # Zephyr module 封装（如 nrf54_common）
+├── cbb/               # Git 子模块：器件驱动（indexxue/cbb）
 ├── tools/             # 主机侧工具
 ├── firmware/          # 发布归档：见 firmware/README.md（命名约定 B）
 ├── scripts/           # setup_env / verify_env
@@ -51,6 +52,7 @@ nRF54L15/
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify_env.ps1
+git submodule update --init --recursive
 .\nrf.cmd detect
 .\nrf.cmd build
 ```

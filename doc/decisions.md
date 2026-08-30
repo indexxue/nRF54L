@@ -29,7 +29,7 @@ Framework choices. **P0 closed** (folders + SDK path + build). Flash/hw verify s
 | Image sign | Optional in development; enforce later for production |
 | Write rules | Running APP writes only slot1 + storage; Boot alone activates slots |
 | `pm_static.yml` | Pre-MCUBoot: `app` + `settings_storage` in each project; dual-slot map deferred |
-| cbb | Not included |
+| cbb | Git submodule `cbb/` → `git@github.com:indexxue/cbb.git`（驱动接入仍按需） |
 | CLI | `nrf.cmd` / `nrf.ps1` + `nrf.env` |
 | Setup | Semi-auto `scripts/setup_env.ps1` via nrfutil sdk-manager |
 

@@ -13,7 +13,7 @@
 | P1 | SDK / 工具链路径文档化 | **完成**：getting_started + plan 本节路径表 |
 | P2 | 自定义 `boards/` | 有原理图后再做 |
 | **暂缓** | J-Link SWD 烧录、串口日志硬件冒烟 | **跳过**，不阻塞目录与 SDK 工作 |
-| 以后 | MCUBoot/OTA、BLE、`cbb`、`firmware/` 发布流水线 | 板级与业务稳定后 |
+| 以后 | MCUBoot/OTA、BLE、接 `cbb` 驱动、`firmware/` 发布流水线 | 板级与业务稳定后 |
 
 ## 本阶段要盯住的路径
 
