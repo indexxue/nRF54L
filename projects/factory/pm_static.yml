@@ -1,0 +1,11 @@
+# Pre-MCUBoot Partition Manager map (cpuapp RRAM 1428 KiB).
+# settings_storage @ 0x15C000 matches doc/flash_layout.md storage.
+# When MCUBoot is enabled, replace with full dual-slot pm_static (see flash_layout.md).
+
+app:
+  address: 0x0
+  size: 0x15c000
+
+settings_storage:
+  address: 0x15c000
+  size: 0x9000

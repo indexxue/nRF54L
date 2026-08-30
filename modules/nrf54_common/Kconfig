@@ -1,0 +1,33 @@
+# Zephyr module: nrf54_common (sources in ../../common)
+
+config NRF54_COMMON
+	bool
+	default y
+	help
+	  Shared application helpers from repo common/ for projects under this repo.
+
+config APP_BUILD_RELEASE
+	bool "Release build: empty common/log.c output"
+	default n
+	help
+	  When y, log_output() in common/src/log.c is a no-op (no UART / custom sink).
+	  Enable via prj_release.conf for nrf.cmd release.
+
+config APP_VERSION_STRING
+	string "Firmware version string (semver x.y.z)"
+	default "0.0.0"
+	help
+	  Reported by version_get_string(). Set in prj.conf or by nrf.cmd release.
+
+config NRF54_NVS_DEFAULT_DEVICE_ID
+	hex "Compile-time product_id (0 = factory: read NVS did)"
+	default 0x0
+	help
+	  Non-zero locks nvs_product_id_active() to this value (product firmware).
+	  Zero (factory) uses the value stored under NVS key did.
+
+config NRF54_NVS_DEFAULT_HARDWARE_ID
+	hex "Default hardware_id when NVS hid missing"
+	default 0x53530210
+	help
+	  Default NVS_HARDWARE_ID_NRF54L15_DK (0x53530210).
