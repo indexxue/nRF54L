@@ -30,6 +30,7 @@ if (Test-Path $Dest) {
 New-Item -ItemType Directory -Path $Dest | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Dest "src") | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $Dest "lib") | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $Dest "board") | Out-Null
 
 Copy-Item (Join-Path $Template "CMakeLists.txt") (Join-Path $Dest "CMakeLists.txt")
 Copy-Item (Join-Path $Template "prj.conf") (Join-Path $Dest "prj.conf")
@@ -37,6 +38,12 @@ foreach ($f in @("main.c", "app.c", "app.h", "README.md")) {
     $src = Join-Path $Template "src\$f"
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $Dest "src\$f")
+    }
+}
+foreach ($f in @("board_config.c", "app.overlay")) {
+    $src = Join-Path $Template "board\$f"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $Dest "board\$f")
     }
 }
 $templateLibReadme = Join-Path $Template "lib\README.md"
@@ -49,11 +56,12 @@ $cmakeText = Get-Content -Raw -Path $cmake
 $cmakeText = $cmakeText -replace 'project\(demo\)', "project($Name)"
 Set-Content -Path $cmake -Value $cmakeText -NoNewline
 
-foreach ($rel in @("src\main.c", "src\app.c")) {
+foreach ($rel in @("src\main.c", "src\app.c", "board\board_config.c")) {
     $path = Join-Path $Dest $rel
     if (-not (Test-Path $path)) { continue }
     $text = Get-Content -Raw -Path $path
     $text = $text -replace 'projects/demo', "projects/$Name"
+    $text = $text -replace 'demo_ty_rev_a', "${Name}_ty_rev_a"
     $text = $text -replace '\bdemo\b', $Name
     Set-Content -Path $path -Value $text -NoNewline
 }
@@ -70,8 +78,9 @@ $readmeLines = @(
     '```',
     "",
     "Lifecycle: ``src/`` (``app_startup`` / ``app_run``). Private drivers: ``lib/<module>/``.",
+    "Board: ``board/board_config.c`` + ``board/app.overlay`` (mask + DT pinmux).",
     "Shared: ``common/`` via ``modules/nrf54_common``.",
-    "Board default: from ``nrf.env`` (``BOARD=``).",
+    "Board target: from ``nrf.env`` (``BOARD=``).",
     ""
 )
 Set-Content -Path (Join-Path $Dest "README.md") -Value ($readmeLines -join "`n") -Encoding utf8

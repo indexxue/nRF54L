@@ -5,12 +5,16 @@ cmake_minimum_required(VERSION 3.20.0)
 # Shared code: ../../common via Zephyr module ../../modules/nrf54_common
 list(APPEND EXTRA_ZEPHYR_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_common)
 
+# Per-project pinmux; before find_package(Zephyr)
+set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_SOURCE_DIR}/board/app.overlay)
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(factory)
 
 target_sources(app PRIVATE
   src/main.c
   src/app.c
+  board/board_config.c
   lib/cmd/cmd.c
 )
 

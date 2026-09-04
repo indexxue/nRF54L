@@ -17,4 +17,8 @@ zephyr_library_sources(
     ${NRF54_COMMON_ROOT}/src/event.c
     ${NRF54_COMMON_ROOT}/src/nvs.c
     ${NRF54_COMMON_ROOT}/src/device_profile.c
+    ${NRF54_COMMON_ROOT}/src/led_scene.c
+    ${NRF54_COMMON_ROOT}/src/board.c
+    ${NRF54_COMMON_ROOT}/src/button.c
+    ${NRF54_COMMON_ROOT}/src/input.c
 )

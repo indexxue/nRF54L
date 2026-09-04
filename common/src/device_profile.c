@@ -24,6 +24,14 @@ static const device_product_profile_t s_product_profiles[] = {
 		.buttons = NULL,
 		.button_count = 0U,
 	},
+	{
+		.product_id = NVS_PROJECT_ID_EINK_TAG,
+		.name = "eink_tag",
+		.board_mask = DEVICE_BOARD_MASK_SPI | DEVICE_BOARD_MASK_RADIO_2P4G,
+		.platform_mask = DEVICE_PLATFORM_MASK_BUTTON,
+		.buttons = NULL,
+		.button_count = 0U,
+	},
 };
 
 static const device_product_profile_t *s_fallback = &s_product_profiles[0];

@@ -1,26 +1,33 @@
 # demo
 
-**工程模板**（skeleton 默认工程）。新应用优先复制本目录，或用 `scripts/new_project.ps1`。
+工程模板 + **TY rev_a 冒烟**（UART + `led_scene` bootup + 内部 LFCLK RC）。
 
-最小应用：`common` 的 log / event。无私有串口 cmd（cmd 仅 factory）。私有库目录：`lib/`（默认空，见 [`lib/README.md`](lib/README.md)）。
+| 功能 | 引脚 |
+|------|------|
+| UART TX / RX | P1.09 / P1.10（115200） |
+| LED0 / LED1 | P1.04 / P1.05（默认 ACTIVE_LOW） |
+| 时钟 | `CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC` |
+
+板级：[`board/app.overlay`](board/app.overlay)（pinmux）+ [`board/board_config.c`](board/board_config.c)（`board_config_t` 掩码/规格表）。共享参考：[`boards/ty_rev_a.overlay`](../../boards/ty_rev_a.overlay)。
 
 ```powershell
 .\nrf.cmd -Project demo build
-# 本阶段可不 flash：
-# .\nrf.cmd -Project demo flash
+.\nrf.cmd -Project demo flash
+# 串口工具接 TX=P1.09 RX=P1.10 GND；应见 heartbeat；LED 跑 BOOTUP 场景
 ```
 
-Board 默认：`nrf54l15dk/nrf54l15/cpuapp`（见 `nrf.env`）。日志用自备串口工具。
+Board 目标名仍为 `nrf54l15dk/nrf54l15/cpuapp`（见 `nrf.env`）。
 
 ## 必含文件
 
 | 文件 | 作用 |
 |------|------|
-| `CMakeLists.txt` | `EXTRA_ZEPHYR_MODULES` → `nrf54_common`；`project(<name>)` |
-| `prj.conf` | UART console 等 Kconfig |
+| `CMakeLists.txt` | `EXTRA_ZEPHYR_MODULES` + `DTC_OVERLAY_FILE` → `board/app.overlay` |
+| `prj.conf` | UART / GPIO / RC 时钟 / Settings |
+| `board/board_config.c` | 本工程 `board_config_get()` |
+| `board/app.overlay` | 本工程 pinmux |
 | `src/main.c` | 薄入口 → `app_startup` / `app_run` |
-| `src/app.c` / `app.h` | Zephyr 应用生命周期 |
-| `lib/` | 本工程私有库（空占位；按模块名建子目录） |
-| `README.md` | 本工程说明 |
+| `src/app.c` / `app.h` | `board_init` + `led_scene` |
+| `lib/` | 本工程私有库（空占位） |
 
 不要提交 `build/`。

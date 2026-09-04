@@ -12,8 +12,8 @@
 
 ## 特性
 
-- 多工程布局：`projects/demo`（模板）、`projects/factory`（厂测骨架）
-- 共享模块：`log` / `nvs`（Settings）/ `device_profile` / `event` / `crc32` / `flexible_button` / `fw_version`
+- 多工程布局：`projects/demo`（模板）、`projects/eink_tag`（NFC/BLE→墨水屏标签）、`projects/factory`（厂测骨架）
+- 共享模块：`log` / `nvs` / `device_profile` / `board`（结构体+掩码）/ `led_scene` / `event` / `crc32` / `flexible_button` / `fw_version`
 - 分区规划已锁定：MCUBoot 双槽 + storage（见 [`doc/flash_layout.md`](doc/flash_layout.md)）
 - 统一命令：`build` / `release` / `flash` / `detect` / `fullclean`
 - 器件驱动：Git 子模块 `cbb/`（按需接入，不绑死 MCU）

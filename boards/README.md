@@ -1,20 +1,38 @@
 # boards/
 
-自有 PCB 的 Zephyr/NCS **board 定义**（dts、Kconfig、overlay）放这里。
+自有 PCB 的 Zephyr/NCS **共享参考** overlay / 正式 board 定义放这里。
 
-## 当前
+## 分工
 
-工程默认仍编译官方目标名（能编通骨架）：
+| 路径 | 职责 |
+|------|------|
+| `boards/ty_rev_a.overlay` | 共享参考 pinmux（文档 / 对照） |
+| `projects/<name>/board/app.overlay` | **该工程实际编译**用的 overlay（CMake `DTC_OVERLAY_FILE`） |
+| `projects/<name>/board/board_config.c` | 该工程 `board_config_t`（mask + LED/UART/… 规格表） |
+
+引脚只写 overlay；C 侧不重复抄 pin 号。业务模块读 `board_config_get()`。
+
+## 当前 SoC 目标
+
+工程仍编译官方目标名：
 
 `nrf54l15dk/nrf54l15/cpuapp`
 
-这 **不是** 说硬件必须是 Nordic DK。自有板在未提供 DTS 前，只能借用该 SoC 的官方板配置；**GPIO/UART/晶振等可能与实物不符**，烧录靠外接 J-Link SWD，日志靠你板子上的 UART。
+### TY rev_a 冒烟引脚（参考）
 
-## 自有板就绪后
+| 功能 | 引脚 | 说明 |
+|------|------|------|
+| UART TX | **P1.09** | `uart20` → console / `printk` |
+| UART RX | **P1.10** | 115200 8N1 |
+| LED0 | **P1.04** | `GPIO_ACTIVE_LOW` |
+| LED1 | **P1.05** | 同上 |
+| 时钟 | 内部 | LF=`CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC`；HF 无 BLE 时用 HFINT |
 
-1. 在本目录增加 board（或 `BOARD_ROOT` 指向的树）：chip、时钟、console UART、SWD 相关等
+## 自有完整 board 就绪后
+
+1. 在本目录增加正式 board（或 `BOARD_ROOT`）
 2. `nrf.env` 中设置 `BOARD=<你的板目标>`
-3. 在 `doc/` 写清 SWD 座与 UART 引脚
+3. 把 overlay 内容并入板级 dts；工程 `board_config.c` 仍保留规格表
 4. `.\nrf.cmd fullclean` 后再 `build` / `flash`
 
 参考上游：NCS 内 `zephyr/boards/nordic/nrf54l15dk/`。
