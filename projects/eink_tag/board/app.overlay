@@ -1,9 +1,11 @@
 /*
- * eink_tag — 当前硬件接线（内部 LFCLK RC；NFC/BLE 暂关）
+ * eink_tag — 硬件接线（内部 LFCLK RC；NFC/BLE 暂关）
  *
  * UART20: TX=P1.09  RX=P1.10  @ 115200
  * LED_G:  P1.05   LED_B: P1.04  (ACTIVE_LOW)
  * BTN1:   P0.00   BTN2:  P0.01  (ACTIVE_LOW)
+ * EPD SPI00: SCK=P2.01  MOSI=P2.04  CS=P2.05
+ * EPD GPIO:  DC=P1.08   RST=P1.07   BUSY=P1.06
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -27,6 +29,25 @@
 			low-power-enable;
 		};
 	};
+
+	/* SCK=P2.01 MOSI=P2.04；MISO 闲置 P2.02（写屏不用）。bitbang 时会 sleep 掉本组 */
+	spi00_default: spi00_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 1)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 4)>,
+				<NRF_PSEL(SPIM_MISO, 2, 2)>;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
+		};
+	};
+
+	spi00_sleep: spi00_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 1)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 4)>,
+				<NRF_PSEL(SPIM_MISO, 2, 2)>;
+			low-power-enable;
+		};
+	};
 };
 
 &uart20 {
@@ -35,6 +56,19 @@
 	pinctrl-0 = <&uart20_default>;
 	pinctrl-1 = <&uart20_sleep>;
 	pinctrl-names = "default", "sleep";
+};
+
+/* 复用 DK spi00：CS=P2.05，关掉板载 MX25 NOR */
+&spi00 {
+	status = "okay";
+	cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&spi00_default>;
+	pinctrl-1 = <&spi00_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&mx25r64 {
+	status = "disabled";
 };
 
 /* DK PWM LED 占用 P1.10，与 UART RX 冲突 */
@@ -79,5 +113,9 @@
 	zephyr,user {
 		btn1-gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;
 		btn2-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+
+		epd-dc-gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
+		epd-rst-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
+		epd-busy-gpios = <&gpio1 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
 	};
 };

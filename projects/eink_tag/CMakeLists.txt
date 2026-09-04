@@ -9,14 +9,21 @@ set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_SOURCE_DIR}/board/app.overlay)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(eink_tag)
 
+set(CBB_EPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/epd)
+
 target_sources(app PRIVATE
   src/main.c
   src/app.c
   board/board_config.c
-  # source/epd.c — EPD/SPI 暂未接线，接入后再加
+  source/epd.c
+  ${CBB_EPD_DIR}/epd.c
+  ${CBB_EPD_DIR}/epd_display.c
+  ${CBB_EPD_DIR}/epd_display_assets.c
+  ${CBB_EPD_DIR}/panels/epd_panel_gdey029z95.c
 )
 
 target_include_directories(app PRIVATE
+  ${CBB_EPD_DIR}
   src
   source
 )

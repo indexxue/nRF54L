@@ -1,12 +1,13 @@
 /**
  * @file board_config.c
- * @brief eink_tag 当前板级：UART + LED×2 + BTN×2（内部 RC；NFC/BLE/EPD 暂关）。
+ * @brief eink_tag 板级：UART + LED×2 + BTN×2 + SPI00(EPD)；内部 RC；NFC/BLE 暂关。
  *
- * | 资源   | 个数 | 接线                |
- * |--------|------|---------------------|
- * | UART   | 1    | TX=P1.09 RX=P1.10   |
- * | LED    | 2    | G=P1.05 B=P1.04     |
- * | BUTTON | 2    | BTN1=P0.00 BTN2=P0.01 |
+ * | 资源   | 个数 | 接线                                      |
+ * |--------|------|-------------------------------------------|
+ * | UART   | 1    | TX=P1.09 RX=P1.10                         |
+ * | LED    | 2    | G=P1.05 B=P1.04                           |
+ * | BUTTON | 2    | BTN1=P0.00 BTN2=P0.01                     |
+ * | SPI    | 1+1  | SCK=P2.01 MOSI=P2.04 CS=P2.05（从机 epd） |
  */
 
 #include "board.h"
@@ -21,6 +22,8 @@ static const struct gpio_dt_spec s_led_g = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpio
 static const struct gpio_dt_spec s_led_b = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec s_btn1 = GPIO_DT_SPEC_GET(ZUSER, btn1_gpios);
 static const struct gpio_dt_spec s_btn2 = GPIO_DT_SPEC_GET(ZUSER, btn2_gpios);
+static const struct gpio_dt_spec s_epd_cs =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(spi00), cs_gpios, 0);
 
 static const board_led_spec_t s_leds[] = {
 	{.gpio = &s_led_g, .id = 0U, .name = "led_g"},
@@ -52,9 +55,26 @@ static const board_button_spec_t s_buttons[] = {
 	},
 };
 
+static const board_spi_bus_spec_t s_spi_buses[] = {
+	{
+		.dev = DEVICE_DT_GET(DT_NODELABEL(spi00)),
+		.bitrate_hz = 4000000U,
+		.name = "spi00",
+	},
+};
+
+static const board_spi_slave_spec_t s_spi_slaves[] = {
+	{
+		.bus_index = 0U,
+		.cs = &s_epd_cs,
+		.bitrate_hz = 4000000U,
+		.name = "epd",
+	},
+};
+
 static const board_config_t s_board = {
 	.name = "eink_tag_rev_a",
-	.mask = BOARD_MASK_UART | BOARD_MASK_LED | BOARD_MASK_BUTTON,
+	.mask = BOARD_MASK_UART | BOARD_MASK_LED | BOARD_MASK_BUTTON | BOARD_MASK_SPI,
 
 	.leds = s_leds,
 	.led_count = (uint8_t)ARRAY_SIZE(s_leds),
@@ -65,10 +85,10 @@ static const board_config_t s_board = {
 	.i2cs = NULL,
 	.i2c_count = 0U,
 
-	.spi_buses = NULL,
-	.spi_bus_count = 0U,
-	.spi_slaves = NULL,
-	.spi_slave_count = 0U,
+	.spi_buses = s_spi_buses,
+	.spi_bus_count = (uint8_t)ARRAY_SIZE(s_spi_buses),
+	.spi_slaves = s_spi_slaves,
+	.spi_slave_count = (uint8_t)ARRAY_SIZE(s_spi_slaves),
 
 	.adcs = NULL,
 	.adc_count = 0U,

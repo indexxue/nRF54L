@@ -4,6 +4,6 @@
 
 | 文件 | 状态 |
 |------|------|
-| `epd.c` / `epd.h` | 保留；**当前未编入**（板未接 EPD/SPI） |
+| `epd.c` / `epd_board.h` | 已接 **cbb/epd** GDEY029Z95（2.9" BWR） |
 
-接上墨水屏后：在 `board` 开 SPI 从机，并在 `CMakeLists.txt` 加回 `source/epd.c`。
+SPI 从机名 `"epd"` 在 `board/board_config.c`；DC/RST/BUSY 在 `board/app.overlay` 的 `zephyr,user`。
