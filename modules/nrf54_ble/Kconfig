@@ -1,0 +1,8 @@
+# Zephyr module: nrf54_ble (sources in ../../ble)
+
+config NRF54_BLE
+	bool "nRF54 BLE protocol layer (repo ble/)"
+	default y
+	depends on BT
+	help
+	  Shared BLE stack/GAP/GATT + CMD thread from repo ble/.

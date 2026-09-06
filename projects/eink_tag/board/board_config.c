@@ -1,6 +1,6 @@
 /**
  * @file board_config.c
- * @brief eink_tag 板级：UART + LED×2 + BTN×2 + SPI00(EPD)；内部 RC；NFC/BLE 暂关。
+ * @brief eink_tag 板级：UART + LED×2 + BTN×2 + SPI00(EPD) + BLE；HFXO + LFCLK RC；NFC 暂关。
  *
  * | 资源   | 个数 | 接线                                      |
  * |--------|------|-------------------------------------------|
@@ -8,6 +8,7 @@
  * | LED    | 2    | G=P1.05 B=P1.04                           |
  * | BUTTON | 2    | BTN1=P0.00 BTN2=P0.01                     |
  * | SPI    | 1+1  | SCK=P2.01 MOSI=P2.04 CS=P2.05（从机 epd） |
+ * | BLE    | 片上 | 2.4G RADIO（BOARD_MASK_BLE）              |
  */
 
 #include "board.h"
@@ -74,7 +75,8 @@ static const board_spi_slave_spec_t s_spi_slaves[] = {
 
 static const board_config_t s_board = {
 	.name = "eink_tag_rev_a",
-	.mask = BOARD_MASK_UART | BOARD_MASK_LED | BOARD_MASK_BUTTON | BOARD_MASK_SPI,
+	.mask = BOARD_MASK_UART | BOARD_MASK_LED | BOARD_MASK_BUTTON | BOARD_MASK_SPI |
+		BOARD_MASK_BLE,
 
 	.leds = s_leds,
 	.led_count = (uint8_t)ARRAY_SIZE(s_leds),

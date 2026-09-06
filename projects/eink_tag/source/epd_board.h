@@ -20,10 +20,13 @@ extern "C" {
  */
 status_t epd_board_spi_selftest(void);
 
-/** 配置 SPI/CS/DC/RST/BUSY，注册 GDEY029Z95，硬件 init。 */
+/** 配置 SPI/CS/DC/RST/BUSY，注册 GDEY029Z95，硬件 init（调用线程上可能阻塞数秒）。 */
 status_t epd_board_init(void);
 
-/** 黑 → 白 → 红 → 测试图案全刷（阻塞，约数十秒）。 */
+/**
+ * 黑白红 demo 全刷。
+ * 阻塞**调用线程**（可能数十秒）；勿在 main 调用，以免卡住 start_poll 灯效。
+ */
 status_t epd_board_test_run(void);
 
 bool epd_board_is_ready(void);

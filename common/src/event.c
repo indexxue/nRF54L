@@ -47,6 +47,8 @@ void event_set(event_id_e id)
     if ((s_event.mask & (uint32_t)id) != 0U)
     {
         (void)k_mutex_unlock(&s_event.mutex);
+        /* Bit already set (queued work pending); still wake schedule waiters. */
+        (void)k_sem_give(&s_event.sem);
         return;
     }
 
@@ -76,7 +78,8 @@ bool event_is_set(event_id_e id)
         return false;
     }
 
-    if (k_mutex_lock(&s_event.mutex, K_NO_WAIT) != 0)
+    /* K_FOREVER: avoid false-negative when event_set holds the mutex briefly. */
+    if (k_mutex_lock(&s_event.mutex, K_FOREVER) != 0)
     {
         return false;
     }
@@ -98,7 +101,7 @@ void event_clear(event_id_e id)
         return;
     }
 
-    if (k_mutex_lock(&s_event.mutex, K_NO_WAIT) != 0)
+    if (k_mutex_lock(&s_event.mutex, K_FOREVER) != 0)
     {
         return;
     }

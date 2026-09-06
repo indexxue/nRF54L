@@ -2,7 +2,11 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-list(APPEND EXTRA_ZEPHYR_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_common)
+list(APPEND EXTRA_ZEPHYR_MODULES
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_common
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_start
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_ble
+)
 
 set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_SOURCE_DIR}/board/app.overlay)
 
@@ -12,7 +16,6 @@ project(eink_tag)
 set(CBB_EPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/epd)
 
 target_sources(app PRIVATE
-  src/main.c
   src/app.c
   board/board_config.c
   source/epd.c

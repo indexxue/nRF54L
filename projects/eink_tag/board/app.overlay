@@ -1,11 +1,13 @@
 /*
- * eink_tag — 硬件接线（内部 LFCLK RC；NFC/BLE 暂关）
+ * eink_tag — 硬件接线（LFCLK=内部 RC；HFCLK=外部 32 MHz HFXO；BLE 开；NFCT 暂关）
  *
  * UART20: TX=P1.09  RX=P1.10  @ 115200
  * LED_G:  P1.05   LED_B: P1.04  (ACTIVE_LOW)
  * BTN1:   P0.00   BTN2:  P0.01  (ACTIVE_LOW)
  * EPD SPI00: SCK=P2.01  MOSI=P2.04  CS=P2.05
  * EPD GPIO:  DC=P1.08   RST=P1.07   BUSY=P1.06
+ * HFXO:   外部 32 MHz 晶振；片内负载电容 15 pF
+ * NFCT:   暂关（NFC1=P1.02 NFC2=P1.03 硬件可保留）
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -104,9 +106,16 @@
 	status = "disabled";
 };
 
-/* 暂不用片上 NFCT */
+/* 片上 NFCT 暂关（源码保留；需要时再改 okay） */
 &nfct {
 	status = "disabled";
+};
+
+/* 外部 32 MHz HFXO；启动时由 app 请求并保持（见 app.c） */
+&hfxo {
+	status = "okay";
+	load-capacitors = "internal";
+	load-capacitance-femtofarad = <15000>;
 };
 
 / {

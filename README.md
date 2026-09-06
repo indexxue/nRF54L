@@ -13,6 +13,7 @@
 ## 特性
 
 - 多工程布局：`projects/demo`（模板）、`projects/eink_tag`（NFC/BLE→墨水屏标签）、`projects/factory`（厂测骨架）
+- 共享起机：`start/`（`main` / `start_boot` / `start_poll`）；工程只写 `app_init` / `app_run`
 - 共享模块：`log` / `nvs` / `device_profile` / `board`（结构体+掩码）/ `led_scene` / `event` / `crc32` / `flexible_button` / `fw_version`
 - 分区规划已锁定：MCUBoot 双槽 + storage（见 [`doc/flash_layout.md`](doc/flash_layout.md)）
 - 统一命令：`build` / `release` / `flash` / `detect` / `fullclean`
@@ -23,8 +24,10 @@
 ```
 nRF54L15/
 ├── projects/           # 应用工程（demo、factory、…）
+├── start/              # 公共 main / start_boot / start_poll
 ├── common/             # 多工程共享 C 源码
-├── modules/nrf54_common/  # Zephyr module → 引用 common
+├── ble/                # BLE 协议层（CMD 线程 / GAP / GATT）
+├── modules/            # Zephyr module → common、start、ble
 ├── boards/             # 自有板 Devicetree / overlay（待补）
 ├── cbb/                # 子模块：通用器件驱动
 ├── firmware/           # release 归档（二进制默认不入库）
@@ -37,8 +40,10 @@ nRF54L15/
 
 | 代码放哪里 | 路径 |
 |------------|------|
-| 多工程复用 | `common/` |
-| 仅某一工程 | `projects/<name>/lib/<module>/` |
+| 公共起机 / `main` | `start/`（`modules/nrf54_start`） |
+| 多工程复用库 | `common/` |
+| BLE 协议 / 标定 CMD | `ble/`（`modules/nrf54_ble`） |
+| 仅某一工程 | `projects/<name>/src` + `lib/<module>/` |
 | 板级引脚 / DTS | `boards/` |
 | 器件驱动（跨 MCU） | `cbb/<chip>/` |
 

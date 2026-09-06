@@ -9,7 +9,8 @@ Framework choices. **P0 closed** (folders + SDK path + build). Flash/hw verify s
 | Deferred | On-target **flash** and hardware log verify (SWD/UART smoke) |
 | Scope (CLI) | `build` / `detect` / `fullclean` primary; `flash` kept but not required now |
 | New app | `scripts/new_project.ps1` copies `projects/demo` (includes empty `lib/`) |
-| App lifecycle | `src/main.c` + `src/app.c` (`app_startup` → `app_run`); drivers stay in `lib/` |
+| App lifecycle | Shared `start/` (`main` / `start_boot` / `start_poll`) + per-app `src/app.c` (`app_init` → `app_run`); drivers stay in `lib/` / `source/` |
+| Start module | Repo `start/` via `modules/nrf54_start`; optional `CONFIG_START_REQUEST_HFXO` |
 | Firmware archive | `nrf release <ver>` → elf/hex/bin; `CONFIG_APP_BUILD_RELEASE` makes `log_output()` in `common/log.c` a no-op |
 | Lib CMake | Explicit `target_sources` / `target_include_directories` (no glob) |
 | Shared code | Repo `common/` via `modules/nrf54_common` |

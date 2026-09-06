@@ -1,20 +1,16 @@
 # src/
 
-本工程**应用生命周期**（Zephyr RTOS）。外设 / 仅本工程驱动仍在 `../lib/`。
+本工程**业务逻辑**。平台起机在仓库 [`start/`](../../../start/)（`main` / `start_boot` / `start_poll`）。
 
 | 文件 | 职责 |
 |------|------|
-| `main.c` | 极薄入口：`app_startup()` → `app_run()` |
-| `app.h` / `app.c` | 初始化顺序 + 主线程运行循环 |
-| （可选）其它 `.c` | 仅编排用的胶水；大块实现进 `lib/<module>/` |
+| `app.c` | `app_init()` + `app_run()`；循环里调 `start_poll()` |
+| （可选）其它 `.c` | 仅编排用胶水；大块实现进 `lib/<module>/` |
 
-## 启动顺序（约定）
+## 启动顺序
 
-1. `log_init` / `log_set_level`
-2. `event_init`
-3. 本工程 `lib/*` 硬件 init（没有则跳过）
-4. （可选）本工程命令：factory 在 `lib/cmd` 中 `cmd_init` / `cmd_register_defaults`
-5. 按需 `K_THREAD_DEFINE` / `k_thread_create`
-6. `app_run`：主线程业务或 idle/心跳（正常不返回）
+1. `start_boot`（log / event / nvs / board / 可选 HFXO / mask 外设）
+2. `app_init` — 本工程业务 init
+3. `app_run` — 主循环（正常不返回）
 
 Zephyr 下**不必**再启动调度器；`main` 本身已是线程。

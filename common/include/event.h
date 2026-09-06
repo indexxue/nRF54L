@@ -20,6 +20,7 @@ typedef enum
     EVT_ID_INPUT = 0x00000002,
     EVT_ID_TIMER = 0x00000004,
     EVT_ID_WATCHDOG = 0x00000008,
+    EVT_ID_BLE_CMD = 0x00000010, /**< BLE 标定 CMD 已入业务队列，ble_cmd_fetch() */
 } event_id_e;
 
 void event_init(void);

@@ -59,7 +59,7 @@ nrf.env 关键键
 
 ## 应用布局约定（已定）
 
-- `src/`：`main` + `app_startup`/`app_run`（Zephyr 主线程生命周期）；`lib/<module>/`：仅本工程驱动/业务（目录名=源文件名；CMake 显式列出）
+- `start/`：公共 `main` / `start_boot` / `start_poll`；`src/app.c`：`app_init`/`app_run`；`lib/<module>/`：仅本工程驱动/业务（目录名=源文件名；CMake 显式列出）
 - 多工程复用才进 `common/`；详见 `projects/*/src/README.md`、`projects/*/lib/README.md`、[`decisions.md`](decisions.md)
 
 ## 下一步（骨架收口之后）

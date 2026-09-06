@@ -34,7 +34,7 @@ New-Item -ItemType Directory -Path (Join-Path $Dest "board") | Out-Null
 
 Copy-Item (Join-Path $Template "CMakeLists.txt") (Join-Path $Dest "CMakeLists.txt")
 Copy-Item (Join-Path $Template "prj.conf") (Join-Path $Dest "prj.conf")
-foreach ($f in @("main.c", "app.c", "app.h", "README.md")) {
+foreach ($f in @("app.c", "README.md")) {
     $src = Join-Path $Template "src\$f"
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $Dest "src\$f")
@@ -56,7 +56,7 @@ $cmakeText = Get-Content -Raw -Path $cmake
 $cmakeText = $cmakeText -replace 'project\(demo\)', "project($Name)"
 Set-Content -Path $cmake -Value $cmakeText -NoNewline
 
-foreach ($rel in @("src\main.c", "src\app.c", "board\board_config.c")) {
+foreach ($rel in @("src\app.c", "board\board_config.c")) {
     $path = Join-Path $Dest $rel
     if (-not (Test-Path $path)) { continue }
     $text = Get-Content -Raw -Path $path
@@ -77,9 +77,9 @@ $readmeLines = @(
     "# .\nrf.cmd -Project $Name flash",
     '```',
     "",
-    "Lifecycle: ``src/`` (``app_startup`` / ``app_run``). Private drivers: ``lib/<module>/``.",
+    "Lifecycle: ``start/`` (``start_boot`` / ``main``) + ``src/app.c`` (``app_init`` / ``app_run``).",
     "Board: ``board/board_config.c`` + ``board/app.overlay`` (mask + DT pinmux).",
-    "Shared: ``common/`` via ``modules/nrf54_common``.",
+    "Shared: ``common/`` via ``modules/nrf54_common``; ``start/`` via ``modules/nrf54_start``.",
     "Board target: from ``nrf.env`` (``BOARD=``).",
     ""
 )

@@ -1,0 +1,14 @@
+# Zephyr module: nrf54_start (sources in ../../start)
+
+config NRF54_START
+	bool
+	default y
+	help
+	  Shared platform main + start_boot/start_poll from repo start/.
+
+config START_REQUEST_HFXO
+	bool "Request and hold HFXO during start_boot"
+	default n
+	help
+	  Keep the external HF crystal on after boot (needed for accurate RF).
+	  Enable in product prj.conf when the board has a 32 MHz HFXO.

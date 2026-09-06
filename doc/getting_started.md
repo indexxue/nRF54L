@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify_env.ps1
 
 ```
 projects/<name>/     # 每个应用一个目录（demo 为模板）
-  src/               # main + app_startup/app_run（Zephyr 生命周期）
+  src/               # app_init/app_run（平台 main 在 start/）
   lib/               # 本工程私有库（默认空；见 lib/README.md）
 common/              # 多工程共享 C
 modules/nrf54_common/# Zephyr module，编译时引用 common
@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\new_project.ps1 -Name myapp
 
 | 内容 | 目录 |
 |------|------|
-| 入口 / 生命周期 | `projects/<name>/src/`（`main.c` + `app.c`：`app_startup` → `app_run`） |
+| 入口 / 生命周期 | `start/`（`main` / `start_boot`）+ `projects/<name>/src/app.c`（`app_init` → `app_run`） |
 | **仅本工程**用的驱动/业务 | `projects/<name>/lib/<module>/`（目录名=源文件名；勿先塞 `common/`） |
 | 多工程复用的 C | `common/`（经 `modules/nrf54_common` 接入） |
 | 自有板 DTS / overlay | `boards/`（有原理图后再做） |
