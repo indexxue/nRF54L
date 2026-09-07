@@ -69,6 +69,7 @@ status_t start_boot(void)
 
 	event_init();
 	nvs_init();
+	/* nvs_init 末尾已 nvs_log_boot_dump() */
 
 	if (board_init() != STATUS_OK) {
 		LOG_WARN("board_init failed (board=%s)", board_config_get()->name);

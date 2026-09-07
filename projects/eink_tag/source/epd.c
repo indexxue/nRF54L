@@ -13,6 +13,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/spi.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 
 #include <hal/nrf_spim.h>
@@ -53,6 +54,18 @@ static epd_display_t s_disp;
 static bool s_ready;
 static bool s_busy_usable = true;
 static uint32_t s_spi_err_count;
+static atomic_t s_refreshing;
+
+static status_t epd_board_guard_writable(void)
+{
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+	if (atomic_get(&s_refreshing) != 0) {
+		return STATUS_INVALID_STATE;
+	}
+	return STATUS_OK;
+}
 
 static const board_spi_slave_spec_t *epd_find_slave(void)
 {
@@ -294,23 +307,24 @@ status_t epd_board_spi_selftest(void)
 }
 
 /**
- * 复位后观察 BUSY：正常会先高再回低。
- * 一直为低 → 不可用 read_busy（否则 wait_idle 瞬间返回，图形刷不完）。
+ * 复位后观察 BUSY：正常应回到空闲（active-high → 低）。
+ * 一直为高 → 不可用（改固定延时）。复位后立刻为低是正常空闲，不能当成“坏线”。
  */
 static bool epd_busy_probe(void)
 {
 	uint32_t waited = 0U;
-	int raw;
+	int raw_before;
+	int raw_after;
 
-	raw = epd_busy();
-	LOG_INFO("epd: BUSY raw=%d before rst (1=high)", raw);
+	raw_before = epd_busy();
+	LOG_INFO("epd: BUSY raw=%d before rst (1=high)", raw_before);
 
 	epd_rst(0);
 	k_msleep(10);
 	epd_rst(1);
 	k_msleep(20);
-	raw = epd_busy();
-	LOG_INFO("epd: BUSY raw=%d after rst", raw);
+	raw_after = epd_busy();
+	LOG_INFO("epd: BUSY raw=%d after rst", raw_after);
 
 	while ((epd_busy() != 0) && (waited < EPD_BUSY_PROBE_MS)) {
 		k_msleep(50);
@@ -318,17 +332,12 @@ static bool epd_busy_probe(void)
 	}
 
 	if (epd_busy() != 0) {
-		LOG_WARN("epd: BUSY stuck HIGH %ums — use fixed 16s wait", (unsigned int)waited);
+		LOG_WARN("epd: BUSY stuck HIGH %ums — disable read_busy, use fixed wait",
+			 (unsigned int)waited);
 		return false;
 	}
 
-	if ((raw == 0) && (waited == 0U)) {
-		LOG_WARN("epd: BUSY always LOW — settle %ums after each frame",
-			 (unsigned int)EPD_FRAME_SETTLE_MS);
-		return false;
-	}
-
-	LOG_INFO("epd: BUSY idle ok waited=%ums", (unsigned int)waited);
+	LOG_INFO("epd: BUSY idle ok waited=%ums (usable)", (unsigned int)waited);
 	return true;
 }
 
@@ -371,8 +380,11 @@ status_t epd_board_init(void)
 	cfg.epd.set_cs = epd_cs;
 	cfg.epd.set_dc = epd_dc;
 	cfg.epd.set_rst = epd_rst;
-	/* 始终挂 BUSY：不可用时 wait 会很快返回，由 board 补 settle */
-	cfg.epd.read_busy = epd_busy;
+	/*
+	 * BUSY 可用才挂 read_busy。不可用时必须 NULL，否则 wait_idle 仍会轮询引脚，
+	 * BWR 全刷 >8s 易 EPD_ERROR_BUSY；NULL 走库内固定 ~16s 延时。
+	 */
+	cfg.epd.read_busy = s_busy_usable ? epd_busy : NULL;
 	cfg.epd.delay_ms = epd_delay_ms;
 	cfg.epd.busy_active_high = true;
 	/* 全黑常见于 invert 与模组不符；本板实测先关 */
@@ -417,8 +429,13 @@ static status_t epd_refresh_step(const char *name, epd_display_status_t (*fn)(ep
 	}
 	dt = k_uptime_get() - t0;
 
-	LOG_INFO("epd: %s st=%d dt=%lldms busy_ok=%d", name, (int)st, (long long)dt,
-		 s_busy_usable ? 1 : 0);
+	LOG_INFO("epd: %s st=%d(%s) dt=%lldms busy_ok=%d", name, (int)st,
+		 (st == EPD_DISPLAY_OK)             ? "ok"
+		 : (st == EPD_DISPLAY_ERROR_BUSY)   ? "BUSY_TIMEOUT"
+		 : (st == EPD_DISPLAY_ERROR_PARAM)  ? "PARAM"
+		 : (st == EPD_DISPLAY_ERROR_NOT_INIT) ? "NOT_INIT"
+						      : "ERR",
+		 (long long)dt, s_busy_usable ? 1 : 0);
 
 	return (st == EPD_DISPLAY_OK) ? STATUS_OK : STATUS_FAIL;
 }
@@ -439,6 +456,13 @@ status_t epd_board_test_run(void)
 
 	if (!s_ready) {
 		return STATUS_INVALID_STATE;
+	}
+
+	if (atomic_get(&s_refreshing) == 0) {
+		if (atomic_cas(&s_refreshing, 0, 1) == false) {
+			LOG_WARN("epd: demo skipped (refresh busy)");
+			return STATUS_INVALID_STATE;
+		}
 	}
 
 	/* 单帧：白底 + 三色块 + 字符（只刷一次） */
@@ -481,6 +505,7 @@ status_t epd_board_test_run(void)
 	epd_display_draw_rect(&s_disp, 0U, 0U, x_max, y_max, EPD_COLOR_BLACK);
 
 	st = epd_refresh_step("demo", epd_display_refresh, EPD_COLOR_WHITE);
+	atomic_set(&s_refreshing, 0);
 	if (st != STATUS_OK) {
 		return st;
 	}
@@ -489,7 +514,125 @@ status_t epd_board_test_run(void)
 	return STATUS_OK;
 }
 
+status_t epd_board_lock_planes(void)
+{
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+	if (atomic_cas(&s_refreshing, 0, 1) == false) {
+		return STATUS_INVALID_STATE;
+	}
+	return STATUS_OK;
+}
+
+void epd_board_unlock_planes(void)
+{
+	atomic_set(&s_refreshing, 0);
+}
+
+status_t epd_board_refresh(void)
+{
+	status_t st;
+
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+
+	if (atomic_get(&s_refreshing) == 0) {
+		if (atomic_cas(&s_refreshing, 0, 1) == false) {
+			LOG_WARN("epd: refresh skipped (busy)");
+			return STATUS_INVALID_STATE;
+		}
+	}
+
+	LOG_INFO("epd: host buffer refresh");
+	st = epd_refresh_step("host", epd_display_refresh, EPD_COLOR_WHITE);
+	atomic_set(&s_refreshing, 0);
+	return st;
+}
+
 bool epd_board_is_ready(void)
 {
 	return s_ready && epd_display_is_ready(&s_disp);
+}
+
+bool epd_board_is_busy(void)
+{
+	return atomic_get(&s_refreshing) != 0;
+}
+
+uint16_t epd_board_width(void)
+{
+	return s_ready ? epd_display_width(&s_disp) : 0U;
+}
+
+uint16_t epd_board_height(void)
+{
+	return s_ready ? epd_display_height(&s_disp) : 0U;
+}
+
+uint32_t epd_board_plane_size(void)
+{
+	return EPD_PLANE_SIZE;
+}
+
+status_t epd_board_clear_planes(uint8_t planes_mask)
+{
+	status_t st = epd_board_guard_writable();
+
+	if (st != STATUS_OK) {
+		return st;
+	}
+	if ((planes_mask & (EPD_BOARD_PLANES_BW | EPD_BOARD_PLANES_RED)) == 0U) {
+		return STATUS_INVALID_ARG;
+	}
+
+	if ((planes_mask & EPD_BOARD_PLANES_BW) != 0U) {
+		memset(s_bw, 0xFF, sizeof(s_bw)); /* 1 = white */
+	}
+	if ((planes_mask & EPD_BOARD_PLANES_RED) != 0U) {
+		memset(s_red, 0x00, sizeof(s_red));
+	}
+	return STATUS_OK;
+}
+
+status_t epd_board_write_plane(uint8_t plane, uint16_t offset, const uint8_t *data, uint16_t len)
+{
+	uint8_t *dst;
+	status_t st = epd_board_guard_writable();
+
+	if (st != STATUS_OK) {
+		return st;
+	}
+	if ((data == NULL) || (len == 0U)) {
+		return STATUS_INVALID_ARG;
+	}
+	if (((uint32_t)offset + (uint32_t)len) > EPD_PLANE_SIZE) {
+		return STATUS_INVALID_ARG;
+	}
+
+	if (plane == EPD_BOARD_PLANE_BW) {
+		dst = s_bw;
+	} else if (plane == EPD_BOARD_PLANE_RED) {
+		dst = s_red;
+	} else {
+		return STATUS_INVALID_ARG;
+	}
+
+	memcpy(dst + offset, data, len);
+	return STATUS_OK;
+}
+
+const uint8_t *epd_board_plane_data(uint8_t plane)
+{
+	if (!s_ready) {
+		return NULL;
+	}
+	if (plane == EPD_BOARD_PLANE_BW) {
+		return s_bw;
+	}
+	if (plane == EPD_BOARD_PLANE_RED) {
+		return s_red;
+	}
+	return NULL;
 }

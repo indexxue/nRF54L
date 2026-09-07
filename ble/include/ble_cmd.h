@@ -81,16 +81,32 @@ extern "C" {
 
 /* ---- 已分配 ---- */
 
-#define BLE_CMD_PING      1001U /**< 下行测试包：连通 / 冒烟 */
-#define BLE_CMD_DISPLAY   2001U /**< 下行：刷屏 */
-#define BLE_CMD_ACK       7001U /**< 上行统一应答 */
-#define BLE_CMD_HEARTBEAT 8001U /**< 上行心跳上报 */
+#define BLE_CMD_PING         1001U /**< 下行测试包：连通 / 冒烟 */
+#define BLE_CMD_DISPLAY      2001U /**< 下行：触发本地 demo 全刷（与平面上传无关） */
+#define BLE_CMD_DISP_BEGIN   2002U /**< 下行：开会话，声明平面 / 长度 / CRC */
+#define BLE_CMD_DISP_CHUNK   2003U /**< 下行：按 offset 写入平面分片 */
+#define BLE_CMD_DISP_REFRESH 2004U /**< 下行：CRC 通过后全刷当前缓冲 */
+#define BLE_CMD_ACK          7001U /**< 上行统一应答 */
+#define BLE_CMD_HEARTBEAT    8001U /**< 上行心跳上报 */
 
 /** ACK payload：req_cmd_id(u16 LE) + status(i32 LE) */
 #define BLE_CMD_ACK_PAYLOAD_SIZE 6U
 
 /** HEARTBEAT payload：tick(u32 LE) + flags(u8: bit0=adv bit1=connected) */
 #define BLE_CMD_HEARTBEAT_PAYLOAD_SIZE 5U
+
+/** DISP_BEGIN payload 固定 18 B（见 ble/docs/display_plane_upload.md） */
+#define BLE_CMD_DISP_BEGIN_PAYLOAD_SIZE 18U
+
+/** DISP_CHUNK 头：plane(u8) + offset(u16) + data_len(u16) */
+#define BLE_CMD_DISP_CHUNK_HDR_SIZE 5U
+#define BLE_CMD_DISP_CHUNK_DATA_MAX (BLE_CMD_PAYLOAD_MAX - BLE_CMD_DISP_CHUNK_HDR_SIZE)
+
+#define BLE_CMD_DISP_PLANE_BW  0U
+#define BLE_CMD_DISP_PLANE_RED 1U
+
+#define BLE_CMD_DISP_PLANES_BW  (1U << 0)
+#define BLE_CMD_DISP_PLANES_RED (1U << 1)
 
 typedef struct {
 	uint16_t cmd_id;

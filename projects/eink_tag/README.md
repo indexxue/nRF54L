@@ -21,11 +21,13 @@
 `board` mask：`UART | LED | BUTTON | SPI | BLE`
 
 BLE 协议在仓库 [`ble/`](../../ble/)（`modules/nrf54_ble`）。  
+- 上电：EPD **只 init，不跑 demo**（屏保持上一次画面）  
 - 下行测试：`1001` PING → 仅 ACK，**不刷屏**；字节 `E9 03 00 00`  
-- 下行刷屏：`2001` DISPLAY → **异步全刷 demo**（payload 暂忽略）；字节 `D1 07 00 00`  
+- 下行 demo：`2001` DISPLAY → **异步 demo 全刷**  
+- 下行上传：`2002 BEGIN` → `2003 CHUNK`×N → `2004 REFRESH`（帧缓冲，见 [`ble/docs/display_plane_upload.md`](../../ble/docs/display_plane_upload.md)）  
 - 上行心跳：`8001` HEARTBEAT（约 **20s**，需 TX Notify）  
 
-等串口出现 `epd: ready` 后再发 DISPLAY；刷屏期间灯效/BLE 不停。  
+等串口出现 `epd: ready` 后再发 DISPLAY / 上传；刷屏期间灯效/BLE 不停。  
 
 **不要用** nRF Connect 的 SMP / DFU / UART 菜单（会报 `SMP service not found`）。用自定义 128-bit 服务：
 

@@ -136,6 +136,9 @@ bool nvs_build_date_format(uint32_t ymd, char *out, size_t out_cap);
 bool nvs_boot_mode_set(uint8_t mode);
 uint8_t nvs_boot_mode_get(void);
 
+/** 上电后打印 NVS 缓存摘要（MAC/SN/did/hid/版本等）。 */
+void nvs_log_boot_dump(void);
+
 #ifdef __cplusplus
 }
 #endif

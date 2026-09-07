@@ -11,6 +11,7 @@
 #include <zephyr/settings/settings.h>
 
 #include "fw_version.h"
+#include "device_profile.h"
 #include "log.h"
 
 #ifndef NVS_FIRMWARE_BUILD_DATE
@@ -196,6 +197,7 @@ void nvs_init(void)
 		LOG_ERROR("settings_subsys_init rc=%d", rc);
 		nvs_cache_apply_defaults();
 		s_ready = true;
+		nvs_log_boot_dump();
 		return;
 	}
 
@@ -207,8 +209,49 @@ void nvs_init(void)
 	nvs_cache_apply_defaults();
 	s_ready = true;
 
-	LOG_INFO("nvs ready did=0x%08x hid=0x%08x bmode=%u", nvs_product_id_active(),
-		 nvs_hardware_id_get(), (unsigned)nvs_boot_mode_get());
+	nvs_log_boot_dump();
+}
+
+void nvs_log_boot_dump(void)
+{
+	uint8_t mac[NVS_MAC_SIZE];
+	char sn[NVS_SN_SIZE];
+	char hw_ver[NVS_HW_VERSION_SIZE];
+	char app_ver[NVS_APP_VERSION_SIZE];
+	char build[NVS_BUILD_DATE_SIZE];
+	uint32_t did;
+	uint32_t hid;
+	uint32_t active;
+	const char *proj;
+
+	if (!s_ready) {
+		LOG_WARN("nvs dump: not ready");
+		return;
+	}
+
+	(void)nvs_mac_get(mac);
+	(void)nvs_sn_get(sn);
+	(void)nvs_hw_version_get(hw_ver);
+	(void)nvs_app_version_get(app_ver);
+	did = nvs_device_id_get();
+	hid = nvs_hardware_id_get();
+	active = nvs_product_id_active();
+	proj = nvs_device_id_project_name(active);
+	(void)nvs_build_date_format(nvs_build_date_get(), build, sizeof(build));
+
+	LOG_INFO("nvs dump ----");
+	LOG_INFO("  ns=%s ready=%u", NVS_APP_NAMESPACE, (unsigned)s_ready);
+	LOG_INFO("  mac=%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X have=%u", mac[0], mac[1], mac[2],
+		 mac[3], mac[4], mac[5], mac[6], mac[7], (unsigned)s_cache.have_mac);
+	LOG_INFO("  sn=%s have=%u", sn, (unsigned)s_cache.have_sn);
+	LOG_INFO("  dtype=%u did=0x%08x (nvm) active=0x%08x (%s) have_did=%u",
+		 (unsigned)nvs_device_type_get(), did, active, (proj != NULL) ? proj : "?",
+		 (unsigned)s_cache.have_did);
+	LOG_INFO("  hid=0x%08x (%s) have=%u", hid, device_profile_hardware_name(hid),
+		 (unsigned)s_cache.have_hid);
+	LOG_INFO("  bmode=%u have=%u  hw=%s app=%s build=%s", (unsigned)nvs_boot_mode_get(),
+		 (unsigned)s_cache.have_bmode, hw_ver, app_ver, build);
+	LOG_INFO("nvs dump ----");
 }
 
 void nvs_factory_reset(void)

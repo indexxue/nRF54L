@@ -1,0 +1,3397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EPD Tag Designer · nRF</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&family=Roboto:wght@700;900&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0e12;
+      --bg-elev: #101820;
+      --panel: #141c26;
+      --line: #243040;
+      --text: #d8e2ec;
+      --muted: #7a8fa3;
+      --accent: #e8b84a;
+      --accent-dim: #6b5420;
+      --ok: #3dd68c;
+      --err: #ff6b7a;
+      --warn: #e8b84a;
+      --ink-red: #c43c3c;
+      --mono: "JetBrains Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+      --sans: "Noto Sans SC", "IBM Plex Sans", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --font-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --font-price: "Roboto", "Arial Black", "Noto Sans SC", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background:
+        radial-gradient(1100px 520px at 8% -8%, #2a2010 0%, transparent 55%),
+        radial-gradient(900px 480px at 100% 0%, #1a1018 0%, transparent 50%),
+        var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    button, input, select, textarea {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0.4rem 0.55rem;
+    }
+    button { cursor: pointer; background: #1a2533; }
+    button:hover { border-color: #3a5068; }
+    button.primary {
+      background: var(--accent);
+      border-color: transparent;
+      color: #1a1204;
+      font-weight: 650;
+    }
+    button.primary:hover { filter: brightness(1.06); }
+    button.ghost { background: transparent; }
+    button.danger { background: #2a151a; border-color: #5a2a33; color: #ffb4bc; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.sm { padding: 0.28rem 0.5rem; font-size: 0.78rem; }
+    input[type="number"] { -moz-appearance: textfield; }
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    input[type="range"] {
+      padding: 0;
+      accent-color: var(--accent);
+      background: transparent;
+      border: none;
+      width: 100%;
+    }
+    label.field {
+      display: block;
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .chk {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      user-select: none;
+      cursor: pointer;
+    }
+    .chk input { width: auto; margin: 0; accent-color: var(--accent); }
+
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      padding: 0.55rem 1rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(16, 24, 32, 0.92);
+      backdrop-filter: blur(8px);
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+    }
+    .brand .sub { font-size: 0.72rem; color: var(--muted); }
+    .brand a { color: var(--muted); text-decoration: none; font-size: 0.78rem; }
+    .brand a:hover { color: var(--accent); }
+    .stats {
+      display: flex;
+      gap: 0.75rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }
+    .stats b { color: var(--text); font-weight: 600; }
+    .stats .ok b { color: var(--ok); }
+    .stats .warn b { color: var(--warn); }
+    .stats .err b { color: var(--err); }
+    .top-actions { margin-left: auto; display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+    .shell {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+    }
+    .side {
+      border-right: 1px solid var(--line);
+      background: var(--bg-elev);
+      overflow: auto;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+    .block-title {
+      font-size: 0.66rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      padding: 0.65rem;
+    }
+    .row { display: flex; gap: 0.35rem; align-items: center; }
+    .row > * { flex: 1; min-width: 0; }
+    .hint {
+      font-size: 0.7rem;
+      color: var(--muted);
+      line-height: 1.4;
+      margin: 0.3rem 0 0;
+    }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.3rem;
+    }
+    .tool-grid button { font-size: 0.72rem; padding: 0.4rem 0.2rem; }
+    .emoji-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+      margin-top: 0.4rem;
+    }
+    .emoji-row button {
+      width: 2rem;
+      height: 2rem;
+      padding: 0;
+      font-size: 1rem;
+      line-height: 1;
+    }
+    .seg {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.28rem;
+    }
+    .seg.two { grid-template-columns: repeat(2, 1fr); }
+    .seg.four { grid-template-columns: repeat(4, 1fr); }
+    .seg button { padding: 0.32rem 0.2rem; font-size: 0.72rem; }
+    .seg button.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .size-grid {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto;
+      gap: 0.3rem;
+      align-items: end;
+    }
+    .size-grid .unit {
+      font-size: 0.72rem;
+      color: var(--muted);
+      padding-bottom: 0.5rem;
+    }
+    .drop {
+      border: 1px dashed #3a5068;
+      border-radius: 6px;
+      padding: 1.1rem 0.75rem;
+      min-height: 96px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.25rem;
+      text-align: center;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .drop .drop-title { font-weight: 600; color: var(--text); font-size: 0.9rem; }
+    .drop .hint { margin: 0; }
+    .drop:hover, .drop.drag {
+      border-color: var(--accent);
+      background: rgba(232, 184, 74, 0.08);
+    }
+    .layer-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      max-height: 140px;
+      overflow: auto;
+    }
+    .layer-item {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.28rem 0.4rem;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .layer-item:hover { background: #1a2533; }
+    .layer-item.active {
+      border-color: var(--accent);
+      color: var(--text);
+      background: rgba(232, 184, 74, 0.08);
+    }
+    .layer-item .tag {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--accent);
+      min-width: 3.2rem;
+    }
+    .props-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.4rem;
+    }
+    .props-grid .span2 { grid-column: 1 / -1; }
+    .swatch-row { display: flex; gap: 0.3rem; }
+    .swatch {
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      border: 2px solid #3a5068;
+      cursor: pointer;
+      padding: 0;
+    }
+    .swatch.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .swatch.black { background: #111; }
+    .swatch.white { background: #f2f2f2; }
+    .swatch.red { background: var(--ink-red); }
+
+    .stage {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: minmax(240px, 1fr) minmax(140px, 0.7fr);
+    }
+    .screen-panel {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid var(--line);
+      padding: 0.65rem 1rem;
+      gap: 0.45rem;
+    }
+    .screen-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+    }
+    .screen-bar .label {
+      font-size: 0.66rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .zoom-ctrl {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      margin-left: auto;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .zoom-ctrl input[type="range"] { width: 100px; }
+    .screen-stage {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: auto;
+      background:
+        linear-gradient(45deg, #0d1218 25%, transparent 25%),
+        linear-gradient(-45deg, #0d1218 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #0d1218 75%),
+        linear-gradient(-45deg, transparent 75%, #0d1218 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+      background-color: #0a1016;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .canvas-wrap {
+      position: relative;
+      padding: 10px;
+      background: #05080c;
+      border-radius: 8px;
+      border: 2px solid #1a2836;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    }
+    .canvas-wrap canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      cursor: default;
+      background: #fff;
+    }
+    .inline-edit {
+      position: absolute;
+      z-index: 5;
+      margin: 0;
+      padding: 2px 4px;
+      border: 1px solid var(--accent);
+      background: rgba(255, 255, 255, 0.95);
+      color: #111;
+      outline: none;
+      resize: none;
+      overflow: hidden;
+      line-height: 1.15;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .screen-stage .placeholder {
+      color: var(--muted);
+      font-size: 0.88rem;
+      text-align: center;
+      padding: 1.5rem;
+      line-height: 1.6;
+      pointer-events: none;
+    }
+    .output-panel {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 0.55rem 1rem 0.75rem;
+      gap: 0.4rem;
+    }
+    .output-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+    }
+    .output-bar .label {
+      font-size: 0.66rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .radio {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.28rem;
+      font-size: 0.78rem;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .radio input { accent-color: var(--accent); }
+    #output {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      resize: none;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      line-height: 1.4;
+      background: #0c1218;
+      border-color: var(--line);
+    }
+    .serial-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 0.3rem;
+      margin-top: 0.4rem;
+    }
+    details.panel > summary {
+      cursor: pointer;
+      list-style: none;
+      font-size: 0.66rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+    details.panel > summary::-webkit-details-marker { display: none; }
+    details.panel[open] > summary { margin-bottom: 0.55rem; }
+
+
+    .ble-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+      width: 100%;
+      padding: 0.35rem 1rem 0.55rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(16, 24, 32, 0.96);
+    }
+    .ble-bar .ble-title {
+      font-size: 0.66rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-right: 0.35rem;
+    }
+    .ble-bar input[type="text"] { width: 110px; }
+    .ble-bar select { min-width: 220px; max-width: 360px; }
+    .ble-bar .ble-status { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); margin-left: 0.25rem; }
+    .ble-bar .ble-status.ok { color: var(--ok); }
+    .ble-bar .ble-status.err { color: var(--err); }
+
+    @media (max-width: 960px) {
+      body { overflow: auto; }
+      .shell { grid-template-columns: 1fr; height: auto; }
+      .side {
+        border-right: none;
+        border-bottom: 1px solid var(--line);
+        max-height: 50vh;
+      }
+      .stage { min-height: 70vh; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>EPD</h1>
+      <span class="sub">DIY · BLE → eink_tag</span>
+    </div>
+    <div class="stats">
+      <span id="statSize"><b>—</b></span>
+      <span id="statLayers"><b>0</b> 层</span>
+      <span id="statBytes"><b>—</b> B</span>
+      <span id="statSerial" class="ok"><b>串口未开</b></span>
+      <span id="statStatus" class="ok"><b>就绪</b></span>
+    </div>
+    <div class="top-actions">
+      <button class="sm" id="btnSaveJson" type="button">导出工程</button>
+      <button class="sm" id="btnLoadJson" type="button">导入工程</button>
+      <input type="file" id="jsonInput" accept="application/json,.json" hidden />
+      <button class="sm primary" id="btnBuild" type="button">生成输出</button>
+      <button class="sm" id="btnCopy" disabled>复制输出</button>
+      <button class="sm" id="btnDlBin" disabled>下载 .bin</button>
+      <button class="sm" id="btnDlC" disabled>下载 .h</button>
+      <button class="sm" id="btnSend" disabled>串口发送</button>
+      <button class="sm danger ghost" id="btnClear">清空</button>
+    </div>
+  </header>
+
+  <div class="ble-bar" id="bleBar">
+    <span class="ble-title">BLE</span>
+    <input type="text" id="bleFilter" value="eink_tag" title="name filter" />
+    <button class="sm" id="btnBleScan" type="button">Scan</button>
+    <select id="bleDevice"><option value="">(no devices)</option></select>
+    <button class="sm primary" id="btnBleLink" type="button">Connect</button>
+    <button class="sm primary" id="btnBleUpload" type="button" disabled>上传到标签</button>
+    <span class="ble-status" id="bleStatus">bridge offline</span>
+  </div>
+
+  <div class="shell">
+    <aside class="side">
+      <div class="panel">
+        <div class="block-title">模板</div>
+        <div class="tool-grid" style="grid-template-columns:repeat(2,1fr)">
+          <button type="button" data-tpl="price_tag">经典价签</button>
+          <button type="button" data-tpl="promo">促销条</button>
+          <button type="button" data-tpl="strike">划线价</button>
+          <button type="button" data-tpl="poker">扑克牌</button>
+          <button type="button" data-tpl="smoke">三色条 demo</button>
+          <button type="button" data-tpl="gfx">GFX demo</button>
+        </div>
+        <p class="hint" style="margin-top:0.35rem">换尺寸会按当前模板重排，避免拉伸变形。默认 2.9″(128×296)。</p>
+        <div id="pokerPanel" style="margin-top:0.55rem;display:none">
+          <label class="field">花色</label>
+          <div class="emoji-row" id="pokerSuitRow">
+            <button type="button" data-psuit="H" class="active" title="红心">♥</button>
+            <button type="button" data-psuit="D" title="方块">♦</button>
+            <button type="button" data-psuit="C" title="梅花">♣</button>
+            <button type="button" data-psuit="S" title="黑桃">♠</button>
+          </div>
+          <label class="field" for="pokerRank" style="margin-top:0.45rem">点数</label>
+          <select id="pokerRank"></select>
+          <div class="row" style="margin-top:0.45rem">
+            <button class="sm" type="button" id="btnPokerPrev">上一张</button>
+            <button class="sm primary" type="button" id="btnPokerApply">生成牌面</button>
+            <button class="sm" type="button" id="btnPokerNext">下一张</button>
+          </div>
+          <p class="hint" id="pokerHint">红心 A · 1 / 52</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="block-title">添加组件</div>
+        <div class="tool-grid">
+          <button type="button" data-add="text">文字</button>
+          <button type="button" data-add="pricegroup">价格组</button>
+          <button type="button" data-add="strike">划线原价</button>
+          <button type="button" data-add="badge">标签</button>
+          <button type="button" data-add="rect">矩形</button>
+          <button type="button" data-add="roundrect">圆角</button>
+          <button type="button" data-add="ellipse">椭圆</button>
+          <button type="button" data-add="triangle">三角</button>
+          <button type="button" data-add="diamond">菱形</button>
+          <button type="button" data-add="line">横线</button>
+        </div>
+        <p class="hint" style="margin-top:0.4rem">表情 / 符号</p>
+        <div class="emoji-row" id="emojiRow">
+          <button type="button" data-emoji="★">★</button>
+          <button type="button" data-emoji="✓">✓</button>
+          <button type="button" data-emoji="♥">♥</button>
+          <button type="button" data-emoji="●">●</button>
+          <button type="button" data-emoji="◆">◆</button>
+          <button type="button" data-emoji="▲">▲</button>
+          <button type="button" data-emoji="※">※</button>
+          <button type="button" data-emoji="☺">☺</button>
+          <button type="button" data-emoji="♪">♪</button>
+          <button type="button" data-emoji="☀">☀</button>
+        </div>
+        <div class="row" style="margin-top:0.45rem">
+          <button class="sm" type="button" id="btnDup" disabled>复制层</button>
+          <button class="sm danger" type="button" id="btnDel" disabled>删除层</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="block-title">背景</div>
+        <label class="field">图案（墨水屏仅黑/白/红）</label>
+        <div class="tool-grid" style="grid-template-columns:repeat(4,1fr)" id="bgPatSeg">
+          <button type="button" data-bgpat="none" class="active">白底</button>
+          <button type="button" data-bgpat="solid">纯色</button>
+          <button type="button" data-bgpat="tricolor">三色</button>
+          <button type="button" data-bgpat="gradient">渐变</button>
+          <button type="button" data-bgpat="stripes">条纹</button>
+          <button type="button" data-bgpat="grid">网格</button>
+          <button type="button" data-bgpat="checker">棋盘</button>
+        </div>
+        <div id="bgPatOpts" style="margin-top:0.5rem">
+          <div class="row" style="align-items:center;gap:0.35rem;margin-bottom:0.35rem">
+            <span class="hint" style="min-width:1.6rem">主色</span>
+            <div class="swatch-row" id="bgC1Seg">
+              <button type="button" class="swatch black active" data-bgc="black" title="黑"></button>
+              <button type="button" class="swatch white" data-bgc="white" title="白"></button>
+              <button type="button" class="swatch red" data-bgc="red" title="红"></button>
+            </div>
+          </div>
+          <div class="row" id="bgC2Row" style="align-items:center;gap:0.35rem;margin-bottom:0.35rem;display:none">
+            <span class="hint" style="min-width:1.6rem">辅色</span>
+            <div class="swatch-row" id="bgC2Seg">
+              <button type="button" class="swatch black" data-bgc="black" title="黑"></button>
+              <button type="button" class="swatch white active" data-bgc="white" title="白"></button>
+              <button type="button" class="swatch red" data-bgc="red" title="红"></button>
+            </div>
+          </div>
+          <div class="row" id="bgC3Row" style="align-items:center;gap:0.35rem;margin-bottom:0.35rem;display:none">
+            <span class="hint" style="min-width:1.6rem">第三</span>
+            <div class="swatch-row" id="bgC3Seg">
+              <button type="button" class="swatch black" data-bgc="black" title="黑"></button>
+              <button type="button" class="swatch white" data-bgc="white" title="白"></button>
+              <button type="button" class="swatch red active" data-bgc="red" title="红"></button>
+            </div>
+          </div>
+          <div id="bgDirWrap" style="display:none">
+            <label class="field">方向</label>
+            <div class="seg two" id="bgDirSeg">
+              <button type="button" data-bgdir="v" class="active">纵向</button>
+              <button type="button" data-bgdir="h">横向</button>
+            </div>
+          </div>
+          <div id="bgPitchWrap" style="display:none;margin-top:0.4rem">
+            <label class="field" for="bgPitch">间距 <span id="bgPitchVal">8</span>px</label>
+            <input type="range" id="bgPitch" min="2" max="64" value="8" />
+          </div>
+          <label class="chk" id="bgSoftWrap" style="margin-top:0.4rem;display:none">
+            <input type="checkbox" id="bgSoftGrad" checked /> 渐变抖动（更细腻）
+          </label>
+        </div>
+        <p class="hint" style="margin-top:0.45rem">图案作底层；上传图片会覆盖图案。</p>
+        <div class="drop" id="dropZone" role="button" tabindex="0">
+          <span class="drop-title">点击或拖放背景图</span>
+          <p class="hint" id="fileName">可空 · 图片优先于图案</p>
+        </div>
+        <input type="file" id="fileInput" accept="image/png,image/jpeg,image/bmp,image/gif,image/webp,.png,.jpg,.jpeg,.bmp,.gif,.webp" hidden />
+        <div class="seg" id="fitSeg" style="margin-top:0.45rem">
+          <button type="button" data-fit="contain" class="active">contain</button>
+          <button type="button" data-fit="cover">cover</button>
+          <button type="button" data-fit="stretch">stretch</button>
+        </div>
+        <button class="sm" type="button" id="btnClearBg" style="margin-top:0.4rem;width:100%">清除图片背景</button>
+      </div>
+
+      <div class="panel">
+        <div class="block-title">屏幕尺寸</div>
+        <label class="field" for="preset">预设</label>
+        <select id="preset"></select>
+        <div class="size-grid" style="margin-top:0.45rem">
+          <div>
+            <label class="field" for="width">宽</label>
+            <input type="number" id="width" min="8" max="800" value="128" />
+          </div>
+          <span class="unit">×</span>
+          <div>
+            <label class="field" for="height">高</label>
+            <input type="number" id="height" min="8" max="800" value="296" />
+          </div>
+          <button class="sm" id="btnSwap" type="button">⇄</button>
+        </div>
+        <p class="hint" id="expectedHint">预期字节随模式变化</p>
+      </div>
+
+      <div class="panel">
+        <div class="block-title">图层</div>
+        <div class="layer-list" id="layerList"></div>
+      </div>
+
+      <div class="panel" id="propPanel">
+        <div class="block-title">选中属性</div>
+        <p class="hint" id="propEmpty">点选画布上的组件进行编辑；双击文字就地打字。</p>
+        <div id="propFields" style="display:none">
+          <div class="props-grid">
+            <div class="span2" id="textFieldWrap">
+              <label class="field" for="propText" id="propTextLabel">内容</label>
+              <textarea id="propText" rows="2"></textarea>
+            </div>
+            <div class="span2" id="currencyWrap" style="display:none">
+              <label class="field" for="propCurrency">货币符号</label>
+              <div class="row">
+                <input type="text" id="propCurrency" maxlength="4" value="¥" />
+                <button class="sm" type="button" data-curinsert="¥">¥</button>
+                <button class="sm" type="button" data-curinsert="$">$</button>
+                <button class="sm" type="button" data-curinsert="€">€</button>
+              </div>
+            </div>
+            <div class="span2" id="curPosWrap" style="display:none">
+              <label class="field">货币位置</label>
+              <div class="seg two" id="curPosSeg">
+                <button type="button" data-curpos="topleft" class="active">左上</button>
+                <button type="button" data-curpos="baseline">左侧</button>
+              </div>
+            </div>
+            <div>
+              <label class="field" for="propSize">字号</label>
+              <input type="number" id="propSize" min="8" max="200" />
+            </div>
+            <div>
+              <label class="field" for="propWeight">粗细</label>
+              <select id="propWeight">
+                <option value="400">常规</option>
+                <option value="700">粗体</option>
+                <option value="900">特粗</option>
+              </select>
+            </div>
+            <div class="span2">
+              <label class="field" for="propFont">字体</label>
+              <select id="propFont">
+                <option value="body">EPD 正文（Noto Sans SC）</option>
+                <option value="price">EPD 价格（Roboto）</option>
+                <option value="custom">本机字体名…</option>
+              </select>
+            </div>
+            <div class="span2" id="customFontWrap" style="display:none">
+              <label class="field" for="propFontCustom">本机字体名</label>
+              <input type="text" id="propFontCustom" placeholder="Microsoft YaHei" />
+            </div>
+            <div class="span2">
+              <label class="field">颜色</label>
+              <div class="swatch-row" id="colorSwatches">
+                <button type="button" class="swatch black" data-color="black" title="黑"></button>
+                <button type="button" class="swatch white" data-color="white" title="白"></button>
+                <button type="button" class="swatch red" data-color="red" title="红"></button>
+              </div>
+            </div>
+            <div>
+              <label class="field" for="propX">X</label>
+              <input type="number" id="propX" />
+            </div>
+            <div>
+              <label class="field" for="propY">Y</label>
+              <input type="number" id="propY" />
+            </div>
+            <div>
+              <label class="field" for="propW">宽</label>
+              <input type="number" id="propW" min="1" />
+            </div>
+            <div>
+              <label class="field" for="propH">高</label>
+              <input type="number" id="propH" min="1" />
+            </div>
+            <div class="span2" id="strokeWrap" style="display:none">
+              <label class="field" for="propStroke">线宽</label>
+              <input type="number" id="propStroke" min="1" max="40" />
+            </div>
+            <div class="span2" id="radiusWrap" style="display:none">
+              <label class="field" for="propRadius">圆角</label>
+              <input type="number" id="propRadius" min="0" max="200" />
+            </div>
+            <div class="span2" id="fillWrap" style="display:none">
+              <label class="chk"><input type="checkbox" id="propFill" /> 填充（否则描边）</label>
+            </div>
+            <div class="span2" id="alignWrap">
+              <label class="field">对齐</label>
+              <div class="seg three" id="alignSeg">
+                <button type="button" data-align="left">左</button>
+                <button type="button" data-align="center">中</button>
+                <button type="button" data-align="right">右</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="block-title">颜色模式 / 转换</div>
+        <div class="seg two" id="colorSeg">
+          <button type="button" data-color-mode="bw">黑白</button>
+          <button type="button" data-color-mode="tricolor" class="active">红黑白</button>
+        </div>
+        <label class="field" for="threshold" style="margin-top:0.5rem">背景阈值 <span id="thresholdVal">128</span></label>
+        <input type="range" id="threshold" min="0" max="255" value="128" />
+        <label class="field" for="redSens" style="margin-top:0.45rem">红色灵敏度 <span id="redSensVal">0.35</span></label>
+        <input type="range" id="redSens" min="15" max="70" value="35" />
+        <div class="row" style="margin-top:0.45rem">
+          <label class="chk"><input type="checkbox" id="dither" checked /> 背景 FS 抖动</label>
+        </div>
+      </div>
+
+      <details class="panel">
+        <summary>编码 / 导出名 ▾</summary>
+        <label class="field" for="bitOrder">位序</label>
+        <select id="bitOrder">
+          <option value="msb" selected>行优先 · MSB 先</option>
+          <option value="lsb">行优先 · LSB 先</option>
+        </select>
+        <label class="field" for="planeOrder" style="margin-top:0.45rem">平面顺序</label>
+        <select id="planeOrder">
+          <option value="black_first" selected>黑 → 红</option>
+          <option value="red_first">红 → 黑</option>
+        </select>
+        <label class="field" for="polarity" style="margin-top:0.45rem">极性</label>
+        <select id="polarity">
+          <option value="ink1" selected>1 = 有墨</option>
+          <option value="ink0">0 = 有墨</option>
+        </select>
+        <label class="field" for="arrayName" style="margin-top:0.45rem">数组名</label>
+        <input type="text" id="arrayName" value="epd_image" spellcheck="false" />
+      </details>
+
+      <details class="panel">
+        <summary>串口（Web Serial 壳）▾</summary>
+        <label class="field" for="baud">波特率</label>
+        <select id="baud">
+          <option>115200</option>
+          <option selected>921600</option>
+          <option>460800</option>
+          <option>230400</option>
+        </select>
+        <div class="serial-row">
+          <button class="sm" id="btnPickPort" type="button">选择串口</button>
+          <button class="sm" id="btnOpenPort" type="button" disabled>打开</button>
+          <button class="sm" id="btnClosePort" type="button" disabled>关闭</button>
+        </div>
+        <label class="chk" style="margin-top:0.45rem">
+          <input type="checkbox" id="serialEnableSend" /> 允许实发（占位帧 EPD1）
+        </label>
+        <p class="hint" id="serialHint">协议未与固件约定；默认只组帧不发送。</p>
+      </details>
+    </aside>
+
+    <section class="stage">
+      <div class="screen-panel">
+        <div class="screen-bar">
+          <span class="label">画布</span>
+          <span class="hint" style="margin:0" id="previewMeta">添加组件或套用模板</span>
+          <div class="zoom-ctrl">
+            <button class="sm" id="btnFitZoom" type="button" title="适应窗口">适应</button>
+            <button class="sm" id="zoomOut" type="button">−</button>
+            <input type="range" id="zoom" min="1" max="12" value="3" step="1" />
+            <button class="sm" id="zoomIn" type="button">+</button>
+            <span id="zoomLabel">×3</span>
+          </div>
+        </div>
+        <div class="screen-stage" id="screenStage">
+          <div class="canvas-wrap" id="canvasWrap">
+            <canvas id="viewCanvas" width="400" height="300"></canvas>
+            <textarea class="inline-edit" id="inlineEdit" style="display:none"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="output-panel">
+        <div class="output-bar">
+          <span class="label">输出</span>
+          <button class="sm primary" id="btnBuild2" type="button">生成输出</button>
+          <label class="radio"><input type="radio" name="fmt" value="c_array" checked /> C 数组</label>
+          <label class="radio"><input type="radio" name="fmt" value="hex" /> 纯十六进制</label>
+        </div>
+        <textarea id="output" readonly placeholder="// 排版完成后点「生成输出」，不再随画布实时刷新"></textarea>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const STORAGE_KEY = "pi-lab.epd.draft.v2";
+    const FONT_BODY = 'var(--font-body)';
+    const FONT_PRICE = 'var(--font-price)';
+    const INK = { black: [0, 0, 0], white: [255, 255, 255], red: [196, 60, 60] };
+
+    const PRESETS = [
+      { value: "custom", label: "自定义宽高" },
+      { value: "104x212", label: "104×212 · 2.13″" },
+      { value: "122x250", label: "122×250 · 2.13″" },
+      { value: "128x250", label: "128×250 · 2.13″" },
+      { value: "212x104", label: "212×104 · 2.13″ 横" },
+      { value: "250x122", label: "250×122 · 2.13″ 横" },
+      { value: "128x296", label: "128×296 · 2.9″" },
+      { value: "168x384", label: "168×384 · 2.9″" },
+      { value: "296x128", label: "296×128 · 2.9″ 横" },
+      { value: "384x168", label: "384×168 · 2.9″ 横" },
+      { value: "400x300", label: "400×300 · 4.2″" },
+      { value: "300x400", label: "300×400 · 4.2″ 竖" },
+    ];
+
+    const state = {
+      width: 128,
+      height: 296,
+      layers: [],
+      selectedId: null,
+      bgImage: null,
+      bgDataUrl: null,
+      bgPattern: { type: "none", c1: "white", c2: "black", c3: "red", dir: "v", pitch: 8, soft: true },
+      /** @type {ImageData|null} cached dithered background */
+      bgCache: null,
+      bgCacheKey: "",
+      fit: "contain",
+      colorMode: "tricolor",
+      zoom: 3,
+      autoFitOnce: true,
+      packed: null,
+      blackBytes: null,
+      redBytes: null,
+      exportDirty: true,
+      timer: null,
+      raf: null,
+      draftTimer: null,
+      syncingPreset: false,
+      syncingProps: false,
+      drag: null,
+      editingId: null,
+      port: null,
+      writer: null,
+      uid: 1,
+      pokerRank: "A",
+      pokerSuit: "H",
+      activeTemplate: "price_tag",
+      bleConnected: false,
+      bleBusy: false,
+      blePollTimer: null,
+    };
+
+    const POKER_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+    const POKER_SUITS = [
+      { id: "H", sym: "♥", color: "red", name: "红心" },
+      { id: "D", sym: "♦", color: "red", name: "方块" },
+      { id: "C", sym: "♣", color: "black", name: "梅花" },
+      { id: "S", sym: "♠", color: "black", name: "黑桃" },
+    ];
+
+    function pokerIndex() {
+      const si = POKER_SUITS.findIndex((s) => s.id === state.pokerSuit);
+      const ri = POKER_RANKS.indexOf(state.pokerRank);
+      return Math.max(0, si) * 13 + Math.max(0, ri);
+    }
+
+    function setPokerFromIndex(idx) {
+      const n = ((idx % 52) + 52) % 52;
+      state.pokerSuit = POKER_SUITS[Math.floor(n / 13)].id;
+      state.pokerRank = POKER_RANKS[n % 13];
+    }
+
+    function updatePokerHint() {
+      const suit = POKER_SUITS.find((s) => s.id === state.pokerSuit) || POKER_SUITS[0];
+      $("pokerHint").textContent = `${suit.name} ${state.pokerRank} · ${pokerIndex() + 1} / 52`;
+      $("pokerSuitRow").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.psuit === state.pokerSuit);
+      });
+      if ($("pokerRank").value !== state.pokerRank) $("pokerRank").value = state.pokerRank;
+    }
+
+    function pokerPipLayout(rank) {
+      const L = 0.28, R = 0.72, C = 0.5;
+      const T = 0.16, M = 0.5, B = 0.84;
+      const T2 = 0.3, B2 = 0.7;
+      const Tm = 0.38, Bm = 0.62;
+      switch (rank) {
+        case "A": return [[C, M]];
+        case "2": return [[C, T], [C, B]];
+        case "3": return [[C, T], [C, M], [C, B]];
+        case "4": return [[L, T], [R, T], [L, B], [R, B]];
+        case "5": return [[L, T], [R, T], [C, M], [L, B], [R, B]];
+        case "6": return [[L, T], [R, T], [L, M], [R, M], [L, B], [R, B]];
+        case "7": return [[L, T], [R, T], [C, T2], [L, M], [R, M], [L, B], [R, B]];
+        case "8": return [[L, T], [R, T], [C, T2], [L, M], [R, M], [C, B2], [L, B], [R, B]];
+        case "9": return [[L, T], [R, T], [L, T2], [R, T2], [C, M], [L, B2], [R, B2], [L, B], [R, B]];
+        case "10": return [[L, T], [R, T], [L, T2], [R, T2], [C, Tm], [C, Bm], [L, B2], [R, B2], [L, B], [R, B]];
+        default: return null;
+      }
+    }
+
+    function buildPokerCardLayers(rank, suitId) {
+      const { width, height } = getSize();
+      const pad = Math.max(6, Math.round(Math.min(width, height) * 0.055));
+      const suit = POKER_SUITS.find((s) => s.id === suitId) || POKER_SUITS[0];
+      const color = suit.color;
+      const sym = suit.sym;
+      const layers = [];
+
+      const cardAspect = 2.5 / 3.5;
+      let cardH = height - pad * 2;
+      let cardW = Math.round(cardH * cardAspect);
+      if (cardW > width - pad * 2) {
+        cardW = width - pad * 2;
+        cardH = Math.round(cardW / cardAspect);
+      }
+      const cx = Math.round((width - cardW) / 2);
+      const cy = Math.round((height - cardH) / 2);
+      const inset = Math.max(5, Math.round(Math.min(cardW, cardH) * 0.07));
+      const cornerSize = Math.max(14, Math.round(cardH * (rank === "10" ? 0.09 : 0.11)));
+      const suitCorner = Math.max(12, Math.round(cardH * 0.085));
+      const pipSize = Math.max(14, Math.round(cardH * (["A", "J", "Q", "K"].includes(rank) ? 0.28 : 0.11)));
+      const faceSize = Math.max(28, Math.round(cardH * 0.28));
+
+      layers.push({
+        ...defaultLayer("roundrect"),
+        x: cx, y: cy, w: cardW, h: cardH,
+        radius: Math.max(6, Math.round(Math.min(cardW, cardH) * 0.06)),
+        stroke: Math.max(2, Math.round(Math.min(cardW, cardH) / 55)),
+        color: "black", fill: false,
+      });
+      layers.push({
+        ...defaultLayer("roundrect"),
+        x: cx + Math.max(2, Math.round(inset * 0.35)),
+        y: cy + Math.max(2, Math.round(inset * 0.35)),
+        w: cardW - Math.max(4, Math.round(inset * 0.7)),
+        h: cardH - Math.max(4, Math.round(inset * 0.7)),
+        radius: Math.max(4, Math.round(Math.min(cardW, cardH) * 0.04)),
+        stroke: Math.max(1, Math.round(Math.min(cardW, cardH) / 120)),
+        color: "black", fill: false,
+      });
+
+      layers.push({
+        ...defaultLayer("text"),
+        text: rank,
+        x: cx + inset,
+        y: cy + inset,
+        w: Math.round(cardW * 0.32),
+        h: Math.round(cornerSize * 1.2),
+        fontSize: cornerSize,
+        color, align: "left", fontKey: "price", fontWeight: "900",
+      });
+      layers.push({
+        ...defaultLayer("emoji"),
+        text: sym,
+        x: cx + inset,
+        y: cy + inset + Math.round(cornerSize * 1.05),
+        w: Math.round(suitCorner * 1.35),
+        h: Math.round(suitCorner * 1.35),
+        fontSize: suitCorner,
+        color,
+      });
+
+      const innerX = cx + inset;
+      const innerY = cy + inset + Math.round(cornerSize * 2.1);
+      const innerW = cardW - inset * 2;
+      const innerH = Math.max(20, cardH - inset * 2 - Math.round(cornerSize * 2.1) * 2);
+
+      const pips = pokerPipLayout(rank);
+      if (pips) {
+        pips.forEach(([px, py]) => {
+          const s = pipSize;
+          layers.push({
+            ...defaultLayer("emoji"),
+            text: sym,
+            x: Math.round(innerX + px * innerW - s * 0.6),
+            y: Math.round(innerY + py * innerH - s * 0.6),
+            w: Math.round(s * 1.2),
+            h: Math.round(s * 1.2),
+            fontSize: s,
+            color,
+          });
+        });
+      } else {
+        layers.push({
+          ...defaultLayer("text"),
+          text: rank,
+          x: cx + Math.round(cardW * 0.2),
+          y: Math.round(cy + cardH * 0.32),
+          w: Math.round(cardW * 0.6),
+          h: Math.round(faceSize * 1.2),
+          fontSize: faceSize,
+          color, align: "center", fontKey: "price", fontWeight: "900",
+        });
+        layers.push({
+          ...defaultLayer("emoji"),
+          text: sym,
+          x: Math.round(cx + (cardW - faceSize * 0.9) / 2),
+          y: Math.round(cy + cardH * 0.55),
+          w: Math.round(faceSize * 0.9),
+          h: Math.round(faceSize * 0.9),
+          fontSize: Math.round(faceSize * 0.7),
+          color,
+        });
+      }
+
+      layers.push({
+        ...defaultLayer("emoji"),
+        text: sym,
+        x: cx + cardW - inset - Math.round(suitCorner * 1.35),
+        y: cy + cardH - inset - Math.round(suitCorner * 1.35) - Math.round(cornerSize * 1.05),
+        w: Math.round(suitCorner * 1.35),
+        h: Math.round(suitCorner * 1.35),
+        fontSize: suitCorner,
+        color,
+      });
+      layers.push({
+        ...defaultLayer("text"),
+        text: rank,
+        x: cx + cardW - inset - Math.round(cardW * 0.32),
+        y: cy + cardH - inset - Math.round(cornerSize * 1.2),
+        w: Math.round(cardW * 0.32),
+        h: Math.round(cornerSize * 1.2),
+        fontSize: cornerSize,
+        color, align: "right", fontKey: "price", fontWeight: "900",
+      });
+
+      return layers;
+    }
+
+    function applyPokerCard() {
+      $("pokerPanel").style.display = "";
+      state.layers = buildPokerCardLayers(state.pokerRank, state.pokerSuit);
+      updatePokerHint();
+      selectLayer(state.layers[state.layers.length - 1]?.id || null);
+      scheduleRender();
+      const suit = POKER_SUITS.find((s) => s.id === state.pokerSuit);
+      setStatus(`扑克 ${suit ? suit.name : ""} ${state.pokerRank}`, "ok");
+    }
+
+    function uid() { return `L${state.uid++}`; }
+
+    function setStatus(text, kind) {
+      const el = $("statStatus");
+      el.className = kind || "ok";
+      el.innerHTML = `<b>${text}</b>`;
+    }
+    function setSerialStatus(text, kind) {
+      const el = $("statSerial");
+      el.className = kind || "ok";
+      el.innerHTML = `<b>${text}</b>`;
+    }
+
+    function clampSize(n, fallback) {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return fallback;
+      return Math.min(800, Math.max(8, Math.round(v)));
+    }
+    function getSize() {
+      return {
+        width: clampSize($("width").value, state.width),
+        height: clampSize($("height").value, state.height),
+      };
+    }
+    function planeByteLen(w, h) { return Math.ceil(w / 8) * h; }
+
+    function fontCss(layer) {
+      if (layer.fontKey === "price") return getComputedStyle(document.documentElement).getPropertyValue("--font-price").trim() || "Roboto, sans-serif";
+      if (layer.fontKey === "custom" && layer.fontCustom) return `"${layer.fontCustom}", sans-serif`;
+      return getComputedStyle(document.documentElement).getPropertyValue("--font-body").trim() || "Noto Sans SC, sans-serif";
+    }
+
+    function inkRgb(color, mode) {
+      if (mode === "bw" && color === "red") return INK.black;
+      return INK[color] || INK.black;
+    }
+
+    function defaultLayer(type) {
+      const { width, height } = getSize();
+      const m = Math.min(width, height);
+      const base = {
+        id: uid(),
+        type,
+        x: Math.round(width * 0.1),
+        y: Math.round(height * 0.2),
+        w: Math.round(width * 0.6),
+        h: Math.round(height * 0.2),
+        color: "black",
+        text: "",
+        currency: "¥",
+        currencyPos: "topleft",
+        fontSize: 24,
+        fontKey: "body",
+        fontCustom: "",
+        fontWeight: "700",
+        align: "left",
+        stroke: 2,
+        radius: 8,
+        fill: false,
+      };
+      if (type === "text") {
+        base.text = "商品名称";
+        base.fontSize = Math.max(13, Math.round(height * 0.07));
+        base.fontWeight = "700";
+        base.w = Math.round(width * 0.75);
+        base.h = Math.round(base.fontSize * 1.35);
+      } else if (type === "pricegroup") {
+        base.text = "12.90";
+        base.currency = "¥";
+        base.currencyPos = "topleft";
+        base.fontKey = "price";
+        base.fontWeight = "900";
+        base.fontSize = Math.max(36, Math.round(height * 0.32));
+        base.color = "red";
+        base.w = Math.round(width * 0.72);
+        base.h = Math.round(base.fontSize * 1.2);
+        base.y = Math.round(height * 0.4);
+      } else if (type === "strike") {
+        base.text = "29.90";
+        base.currency = "¥";
+        base.currencyPos = "baseline";
+        base.fontKey = "price";
+        base.fontWeight = "700";
+        base.fontSize = Math.max(16, Math.round(height * 0.11));
+        base.color = "black";
+        base.w = Math.round(width * 0.4);
+        base.h = Math.round(base.fontSize * 1.25);
+        base.y = Math.round(height * 0.28);
+      } else if (type === "currency") {
+        // legacy
+        base.text = "¥";
+        base.fontKey = "price";
+        base.fontSize = Math.max(20, Math.round(height * 0.14));
+        base.w = Math.round(base.fontSize * 1.2);
+        base.h = Math.round(base.fontSize * 1.3);
+        base.color = "red";
+      } else if (type === "price") {
+        // legacy
+        base.text = "99.9";
+        base.fontKey = "price";
+        base.fontWeight = "900";
+        base.fontSize = Math.max(28, Math.round(height * 0.22));
+        base.w = Math.round(width * 0.5);
+        base.h = Math.round(base.fontSize * 1.25);
+        base.color = "red";
+      } else if (type === "rect" || type === "roundrect" || type === "ellipse" || type === "triangle" || type === "diamond") {
+        base.w = Math.round(width * (type === "ellipse" || type === "diamond" ? 0.35 : 0.4));
+        base.h = Math.round(height * (type === "ellipse" || type === "diamond" ? 0.28 : 0.28));
+        base.x = Math.round((width - base.w) / 2);
+        base.y = Math.round((height - base.h) / 2);
+        base.fill = type === "triangle" || type === "diamond";
+        base.stroke = Math.max(1, Math.round(m / 100));
+        base.radius = type === "roundrect" ? Math.round(m * 0.03) : 0;
+        base.color = "black";
+      } else if (type === "line") {
+        base.w = Math.round(width * 0.4);
+        base.h = Math.max(2, Math.round(m / 70));
+        base.y = Math.round(height * 0.55);
+        base.stroke = base.h;
+      } else if (type === "badge") {
+        base.text = "SALE";
+        base.fontKey = "body";
+        base.fontWeight = "900";
+        base.fontSize = Math.max(12, Math.round(height * 0.07));
+        base.w = Math.round(width * 0.28);
+        base.h = Math.round(height * 0.14);
+        base.radius = Math.round(base.h * 0.45);
+        base.fill = true;
+        base.color = "red";
+        base.textColor = "white";
+        base.align = "center";
+        base.x = Math.round(width * 0.65);
+        base.y = Math.round(height * 0.08);
+      } else if (type === "emoji") {
+        base.text = "★";
+        base.fontKey = "body";
+        base.fontWeight = "700";
+        base.fontSize = Math.max(28, Math.round(m * 0.14));
+        base.w = Math.round(base.fontSize * 1.2);
+        base.h = Math.round(base.fontSize * 1.2);
+        base.color = "red";
+        base.align = "center";
+      }
+      return base;
+    }
+
+    function selected() {
+      return state.layers.find((l) => l.id === state.selectedId) || null;
+    }
+
+    function updateSizeStats() {
+      const { width, height } = getSize();
+      state.width = width;
+      state.height = height;
+      const one = planeByteLen(width, height);
+      const expected = one * (state.colorMode === "tricolor" ? 2 : 1);
+      $("statSize").innerHTML = `<b>${width}×${height}</b>`;
+      $("statLayers").innerHTML = `<b>${state.layers.length}</b> 层`;
+      $("expectedHint").textContent =
+        state.colorMode === "tricolor"
+          ? `预期 ${expected} B（黑 ${one} + 红 ${one}）`
+          : `预期 ${expected} B`;
+      if (!state.packed) $("statBytes").innerHTML = `<b>${expected}</b> B`;
+    }
+
+    function syncPresetFromSize() {
+      const { width, height } = getSize();
+      const key = `${width}x${height}`;
+      const hit = PRESETS.find((p) => p.value === key);
+      state.syncingPreset = true;
+      $("preset").value = hit ? key : "custom";
+      state.syncingPreset = false;
+    }
+
+    function applyPreset(value) {
+      if (value === "custom") return;
+      const [w, h] = value.split("x").map(Number);
+      state.syncingPreset = true;
+      $("width").value = w;
+      $("height").value = h;
+      state.syncingPreset = false;
+      updateSizeStats();
+      state.autoFitOnce = true;
+      if (state.activeTemplate) {
+        applyTemplate(state.activeTemplate);
+      } else {
+        scheduleRender({ invalidateBg: true });
+      }
+    }
+
+    function renderLayerList() {
+      const box = $("layerList");
+      box.innerHTML = "";
+      if (!state.layers.length) {
+        box.innerHTML = '<p class="hint" style="margin:0">暂无图层</p>';
+        return;
+      }
+      [...state.layers].reverse().forEach((l) => {
+        const el = document.createElement("div");
+        el.className = "layer-item" + (l.id === state.selectedId ? " active" : "");
+        const tagMap = {
+          text: "文字", pricegroup: "价格", strike: "划线", badge: "标签", emoji: "符号",
+          rect: "矩形", roundrect: "圆角", ellipse: "椭圆", triangle: "三角",
+          diamond: "菱形", line: "横线", currency: "货币", price: "价格",
+        };
+        const label = (l.type === "pricegroup" || l.type === "strike")
+          ? `${l.currency || "¥"}${l.text || ""}`
+          : (l.text || l.type);
+        el.innerHTML = `<span class="tag">${tagMap[l.type] || l.type}</span><span>${label}</span>`;
+        el.addEventListener("click", () => selectLayer(l.id));
+        box.appendChild(el);
+      });
+    }
+
+    function selectLayer(id) {
+      state.selectedId = id;
+      endInlineEdit(true);
+      renderLayerList();
+      syncPropPanel();
+      $("btnDup").disabled = !id;
+      $("btnDel").disabled = !id;
+      scheduleRender({ live: true });
+    }
+
+    function syncPropPanel() {
+      const l = selected();
+      state.syncingProps = true;
+      if (!l) {
+        $("propEmpty").style.display = "";
+        $("propFields").style.display = "none";
+        state.syncingProps = false;
+        return;
+      }
+      $("propEmpty").style.display = "none";
+      $("propFields").style.display = "";
+      const isPriceGroup = l.type === "pricegroup" || l.type === "strike";
+      const isTextish = l.type === "text" || l.type === "currency" || l.type === "price" || isPriceGroup || l.type === "badge" || l.type === "emoji";
+      const isShape = ["rect", "roundrect", "ellipse", "triangle", "diamond", "line"].includes(l.type);
+      $("textFieldWrap").style.display = isTextish ? "" : "none";
+      $("propTextLabel").textContent = isPriceGroup ? "金额" : (l.type === "badge" ? "标签文字" : "内容");
+      $("currencyWrap").style.display = isPriceGroup ? "" : "none";
+      $("curPosWrap").style.display = isPriceGroup ? "" : "none";
+      $("alignWrap").style.display = (l.type === "text" || l.type === "badge") ? "" : "none";
+      $("strokeWrap").style.display = isShape && l.type !== "line" ? "" : "none";
+      $("radiusWrap").style.display = (l.type === "roundrect" || l.type === "badge") ? "" : "none";
+      $("fillWrap").style.display = ["rect", "roundrect", "ellipse", "triangle", "diamond"].includes(l.type) ? "" : "none";
+      $("propText").value = l.text || "";
+      $("propCurrency").value = l.currency || "¥";
+      $("curPosSeg").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.curpos === (l.currencyPos || "topleft"));
+      });
+      $("propSize").value = l.fontSize;
+      $("propWeight").value = l.fontWeight || "700";
+      $("propFont").value = l.fontKey || "body";
+      $("customFontWrap").style.display = l.fontKey === "custom" ? "" : "none";
+      $("propFontCustom").value = l.fontCustom || "";
+      $("propX").value = l.x;
+      $("propY").value = l.y;
+      $("propW").value = l.w;
+      $("propH").value = l.h;
+      $("propStroke").value = l.stroke || 2;
+      $("propRadius").value = l.radius || 0;
+      $("propFill").checked = !!l.fill;
+      $("colorSwatches").querySelectorAll(".swatch").forEach((b) => {
+        b.classList.toggle("active", b.dataset.color === l.color);
+        b.style.display = (state.colorMode === "bw" && b.dataset.color === "red") ? "none" : "";
+      });
+      $("alignSeg").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.align === l.align);
+      });
+      state.syncingProps = false;
+    }
+
+    function applyPropsFromPanel() {
+      const l = selected();
+      if (!l || state.syncingProps) return;
+      l.text = $("propText").value;
+      if (l.type === "pricegroup" || l.type === "strike") {
+        l.currency = $("propCurrency").value || "¥";
+      }
+      l.fontSize = Number($("propSize").value) || l.fontSize;
+      l.fontWeight = $("propWeight").value;
+      l.fontKey = $("propFont").value;
+      l.fontCustom = $("propFontCustom").value.trim();
+      l.x = Number($("propX").value) || 0;
+      l.y = Number($("propY").value) || 0;
+      l.w = Math.max(1, Number($("propW").value) || 1);
+      l.h = Math.max(1, Number($("propH").value) || 1);
+      l.stroke = Math.max(1, Number($("propStroke").value) || 1);
+      l.radius = Math.max(0, Number($("propRadius").value) || 0);
+      l.fill = $("propFill").checked;
+      $("customFontWrap").style.display = l.fontKey === "custom" ? "" : "none";
+      renderLayerList();
+      scheduleRender();
+    }
+
+    function drawSourceToCanvas(img, width, height, fit) {
+      const c = document.createElement("canvas");
+      c.width = width;
+      c.height = height;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      const sw = img.naturalWidth;
+      const sh = img.naturalHeight;
+      let dw, dh, ox, oy;
+      if (fit === "stretch") {
+        dw = width; dh = height; ox = 0; oy = 0;
+      } else if (fit === "cover") {
+        const scale = Math.max(width / sw, height / sh);
+        dw = Math.round(sw * scale);
+        dh = Math.round(sh * scale);
+        ox = Math.floor((width - dw) / 2);
+        oy = Math.floor((height - dh) / 2);
+      } else {
+        const scale = Math.min(width / sw, height / sh);
+        dw = Math.max(1, Math.round(sw * scale));
+        dh = Math.max(1, Math.round(sh * scale));
+        ox = Math.floor((width - dw) / 2);
+        oy = Math.floor((height - dh) / 2);
+      }
+      ctx.drawImage(img, ox, oy, dw, dh);
+      return ctx.getImageData(0, 0, width, height);
+    }
+
+    function rgbToHsv(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const d = max - min;
+      let h = 0;
+      if (d !== 0) {
+        if (max === r) h = ((g - b) / d) % 6;
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      const s = max === 0 ? 0 : d / max;
+      return { h, s, v: max };
+    }
+
+    function isRedPixel(r, g, b, satMin) {
+      const { h, s, v } = rgbToHsv(r, g, b);
+      if (v < 0.18 || s < satMin) return false;
+      return h <= 18 || h >= 342 || (h <= 35 && r > g * 1.15 && r > b * 1.15);
+    }
+
+    function convertBgPlanes(rgba, opts) {
+      const { width, height } = rgba;
+      const n = width * height;
+      const blackMask = new Uint8Array(n);
+      const redMask = new Uint8Array(n);
+      const gray = new Float32Array(n);
+      const redFlag = new Uint8Array(n);
+      const satMin = opts.redSens;
+      const tricolor = opts.colorMode === "tricolor";
+
+      for (let i = 0; i < n; i++) {
+        const o = i * 4;
+        const r = rgba.data[o], g = rgba.data[o + 1], b = rgba.data[o + 2];
+        if (tricolor && isRedPixel(r, g, b, satMin)) {
+          redFlag[i] = 1;
+          gray[i] = 255;
+        } else {
+          gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+        }
+      }
+
+      const thr = opts.threshold;
+      if (opts.dither) {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = y * width + x;
+            if (redFlag[i]) { blackMask[i] = 0; redMask[i] = 1; continue; }
+            const old = gray[i];
+            const neu = old > thr ? 255 : 0;
+            blackMask[i] = neu === 0 ? 1 : 0;
+            const err = old - neu;
+            if (x + 1 < width && !redFlag[i + 1]) gray[i + 1] += (err * 7) / 16;
+            if (y + 1 < height) {
+              if (x > 0 && !redFlag[i + width - 1]) gray[i + width - 1] += (err * 3) / 16;
+              if (!redFlag[i + width]) gray[i + width] += (err * 5) / 16;
+              if (x + 1 < width && !redFlag[i + width + 1]) gray[i + width + 1] += (err * 1) / 16;
+            }
+          }
+        }
+      } else {
+        for (let i = 0; i < n; i++) {
+          if (redFlag[i]) { blackMask[i] = 0; redMask[i] = 1; }
+          else { blackMask[i] = gray[i] > thr ? 0 : 1; redMask[i] = 0; }
+        }
+      }
+      return { blackMask, redMask };
+    }
+
+    function masksToImageData(blackMask, redMask, width, height) {
+      const out = new ImageData(width, height);
+      for (let i = 0; i < width * height; i++) {
+        const o = i * 4;
+        if (redMask[i]) {
+          out.data[o] = 196; out.data[o + 1] = 60; out.data[o + 2] = 60;
+        } else if (blackMask[i]) {
+          out.data[o] = out.data[o + 1] = out.data[o + 2] = 0;
+        } else {
+          out.data[o] = out.data[o + 1] = out.data[o + 2] = 255;
+        }
+        out.data[o + 3] = 255;
+      }
+      return out;
+    }
+
+    function drawPriceGroup(ctx, l, css, withStrike) {
+      const amount = String(l.text ?? "0");
+      const cur = String(l.currency || "¥");
+      const pos = l.currencyPos || "topleft";
+      const fontSize = l.fontSize || 32;
+      const weight = l.fontWeight || "900";
+      const family = fontCss({ ...l, fontKey: l.fontKey || "price" });
+      const curSize = Math.max(8, Math.round(fontSize * 0.45));
+      const gap = Math.max(2, Math.round(fontSize * 0.05));
+      ctx.fillStyle = css;
+      ctx.textAlign = "left";
+
+      let boxX = l.x;
+      let boxY = l.y;
+      let boxW = l.w;
+      let midY = l.y + fontSize * 0.55;
+
+      if (pos === "baseline") {
+        ctx.textBaseline = "alphabetic";
+        const baseline = l.y + fontSize;
+        ctx.font = `${weight} ${curSize}px ${family}`;
+        const curW = ctx.measureText(cur).width;
+        ctx.fillText(cur, l.x, baseline);
+        ctx.font = `${weight} ${fontSize}px ${family}`;
+        const ax = l.x + curW + gap;
+        ctx.fillText(amount, ax, baseline);
+        const aw = ctx.measureText(amount).width;
+        boxW = curW + gap + aw;
+        midY = l.y + fontSize * 0.58;
+        if (withStrike) {
+          ctx.strokeStyle = css;
+          ctx.lineWidth = Math.max(1, Math.round(fontSize / 16));
+          ctx.beginPath();
+          ctx.moveTo(l.x, midY);
+          ctx.lineTo(l.x + boxW, midY);
+          ctx.stroke();
+        }
+      } else {
+        ctx.textBaseline = "top";
+        ctx.font = `${weight} ${curSize}px ${family}`;
+        const curW = ctx.measureText(cur).width;
+        ctx.fillText(cur, l.x, l.y);
+        ctx.font = `${weight} ${fontSize}px ${family}`;
+        const ax = l.x + curW + Math.max(1, Math.round(fontSize * 0.03));
+        const ay = l.y + Math.round(curSize * 0.12);
+        ctx.fillText(amount, ax, ay);
+        const aw = ctx.measureText(amount).width;
+        boxW = (ax - l.x) + aw;
+        midY = ay + fontSize * 0.5;
+        if (withStrike) {
+          ctx.strokeStyle = css;
+          ctx.lineWidth = Math.max(1, Math.round(fontSize / 16));
+          ctx.beginPath();
+          ctx.moveTo(ax - 1, midY);
+          ctx.lineTo(ax + aw + 1, midY);
+          ctx.stroke();
+        }
+      }
+      // keep declared vars used for lint calm
+      void boxX; void boxY; void boxW;
+    }
+
+    function drawLayersToCtx(ctx, layers, colorMode) {
+      layers.forEach((l) => {
+        const [r, g, b] = inkRgb(l.color, colorMode);
+        const css = `rgb(${r},${g},${b})`;
+        ctx.save();
+        if (l.type === "rect" || l.type === "roundrect" || l.type === "ellipse" || l.type === "triangle" || l.type === "diamond") {
+          ctx.beginPath();
+          if (l.type === "roundrect") {
+            const rad = Math.min(l.radius || 0, l.w / 2, l.h / 2);
+            pathRoundRect(ctx, l.x, l.y, l.w, l.h, rad);
+          } else if (l.type === "ellipse") {
+            ctx.ellipse(l.x + l.w / 2, l.y + l.h / 2, Math.max(1, l.w / 2), Math.max(1, l.h / 2), 0, 0, Math.PI * 2);
+          } else if (l.type === "triangle") {
+            ctx.moveTo(l.x + l.w / 2, l.y);
+            ctx.lineTo(l.x + l.w, l.y + l.h);
+            ctx.lineTo(l.x, l.y + l.h);
+            ctx.closePath();
+          } else if (l.type === "diamond") {
+            ctx.moveTo(l.x + l.w / 2, l.y);
+            ctx.lineTo(l.x + l.w, l.y + l.h / 2);
+            ctx.lineTo(l.x + l.w / 2, l.y + l.h);
+            ctx.lineTo(l.x, l.y + l.h / 2);
+            ctx.closePath();
+          } else {
+            ctx.rect(l.x, l.y, l.w, l.h);
+          }
+          if (l.fill) {
+            ctx.fillStyle = css;
+            ctx.fill();
+          } else {
+            ctx.strokeStyle = css;
+            ctx.lineWidth = l.stroke || 2;
+            ctx.stroke();
+          }
+        } else if (l.type === "line") {
+          ctx.strokeStyle = css;
+          ctx.lineWidth = l.h || l.stroke || 2;
+          ctx.beginPath();
+          ctx.moveTo(l.x, l.y + (l.h || 2) / 2);
+          ctx.lineTo(l.x + l.w, l.y + (l.h || 2) / 2);
+          ctx.stroke();
+        } else if (l.type === "badge") {
+          const rad = Math.min(l.radius || Math.round(l.h * 0.4), l.w / 2, l.h / 2);
+          ctx.beginPath();
+          pathRoundRect(ctx, l.x, l.y, l.w, l.h, rad);
+          ctx.fillStyle = css;
+          ctx.fill();
+          const tc = inkRgb(l.textColor || (l.color === "black" ? "white" : "black"), colorMode);
+          ctx.fillStyle = `rgb(${tc[0]},${tc[1]},${tc[2]})`;
+          ctx.font = `${l.fontWeight || 900} ${l.fontSize}px ${fontCss(l)}`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(l.text || "SALE"), l.x + l.w / 2, l.y + l.h / 2, l.w - 4);
+        } else if (l.type === "pricegroup") {
+          drawPriceGroup(ctx, l, css, false);
+        } else if (l.type === "strike") {
+          drawPriceGroup(ctx, l, css, true);
+        } else {
+          // text / emoji / legacy
+          ctx.fillStyle = css;
+          ctx.font = `${l.fontWeight || 700} ${l.fontSize}px ${fontCss(l)}`;
+          ctx.textBaseline = l.type === "emoji" ? "middle" : "top";
+          ctx.textAlign = l.align || (l.type === "emoji" ? "center" : "left");
+          let tx = l.x;
+          let ty = l.y;
+          if (l.type === "emoji") {
+            tx = l.x + l.w / 2;
+            ty = l.y + l.h / 2;
+            ctx.fillText(String(l.text || "★"), tx, ty);
+          } else {
+            if (l.align === "center") tx = l.x + l.w / 2;
+            if (l.align === "right") tx = l.x + l.w;
+            const lines = String(l.text || "").split("\n");
+            const lh = l.fontSize * 1.15;
+            lines.forEach((line, i) => {
+              ctx.fillText(line, tx, l.y + i * lh, l.w);
+            });
+          }
+        }
+        ctx.restore();
+      });
+    }
+
+    function pathRoundRect(ctx, x, y, w, h, r) {
+      const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+    }
+
+    function snapOverlayToInk(imageData, colorMode) {
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3];
+        if (a < 40) {
+          d[i + 3] = 0;
+          continue;
+        }
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const candidates = colorMode === "tricolor"
+          ? [["black", INK.black], ["white", INK.white], ["red", INK.red]]
+          : [["black", INK.black], ["white", INK.white]];
+        let best = candidates[0][1];
+        let bestDist = Infinity;
+        for (const [, rgb] of candidates) {
+          const dist = (r - rgb[0]) ** 2 + (g - rgb[1]) ** 2 + (b - rgb[2]) ** 2;
+          if (dist < bestDist) { bestDist = dist; best = rgb; }
+        }
+        d[i] = best[0]; d[i + 1] = best[1]; d[i + 2] = best[2]; d[i + 3] = 255;
+      }
+      return imageData;
+    }
+
+
+    function defaultBgPattern() {
+      return { type: "none", c1: "white", c2: "black", c3: "red", dir: "v", pitch: 8, soft: true };
+    }
+
+    function inkCssRgb(color) {
+      const rgb = INK[color] || INK.white;
+      return rgb;
+    }
+
+    function fillPixel(img, i, color) {
+      const rgb = inkCssRgb(color);
+      const o = i * 4;
+      img.data[o] = rgb[0];
+      img.data[o + 1] = rgb[1];
+      img.data[o + 2] = rgb[2];
+      img.data[o + 3] = 255;
+    }
+
+    function bayerThreshold(x, y) {
+      // 4x4 Bayer matrix → 0..15, map to 0..255
+      const M = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+      ];
+      return ((M[y & 3][x & 3] + 0.5) / 16) * 255;
+    }
+
+    function generatePatternBg(width, height, pat) {
+      const img = new ImageData(width, height);
+      const type = (pat && pat.type) || "none";
+      const c1 = (pat && pat.c1) || "white";
+      const c2 = (pat && pat.c2) || "black";
+      const c3 = (pat && pat.c3) || "red";
+      const dir = (pat && pat.dir) || "v";
+      const pitch = Math.max(2, Number(pat && pat.pitch) || 8);
+      const soft = !!(pat && pat.soft);
+
+      if (type === "none") {
+        for (let i = 0; i < width * height; i++) fillPixel(img, i, "white");
+        return img;
+      }
+      if (type === "solid") {
+        for (let i = 0; i < width * height; i++) fillPixel(img, i, c1);
+        return img;
+      }
+      if (type === "tricolor") {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const t = dir === "h" ? x / Math.max(1, width) : y / Math.max(1, height);
+            const c = t < 1 / 3 ? c1 : (t < 2 / 3 ? c2 : c3);
+            fillPixel(img, y * width + x, c);
+          }
+        }
+        return img;
+      }
+      if (type === "gradient") {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const t = dir === "h" ? x / Math.max(1, width - 1) : y / Math.max(1, height - 1);
+            let c;
+            if (soft) {
+              const thr = bayerThreshold(x, y);
+              c = (t * 255) > thr ? c2 : c1;
+            } else {
+              c = t < 0.5 ? c1 : c2;
+            }
+            fillPixel(img, y * width + x, c);
+          }
+        }
+        return img;
+      }
+      if (type === "stripes") {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const k = dir === "h" ? Math.floor(x / pitch) : Math.floor(y / pitch);
+            fillPixel(img, y * width + x, (k & 1) ? c2 : c1);
+          }
+        }
+        return img;
+      }
+      if (type === "grid") {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const onLine = (x % pitch === 0) || (y % pitch === 0);
+            fillPixel(img, y * width + x, onLine ? c2 : c1);
+          }
+        }
+        return img;
+      }
+      if (type === "checker") {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const cx = Math.floor(x / pitch);
+            const cy = Math.floor(y / pitch);
+            fillPixel(img, y * width + x, ((cx + cy) & 1) ? c2 : c1);
+          }
+        }
+        return img;
+      }
+      for (let i = 0; i < width * height; i++) fillPixel(img, i, "white");
+      return img;
+    }
+
+    function syncBgPatUi() {
+      const pat = state.bgPattern || defaultBgPattern();
+      const type = pat.type || "none";
+      $("bgPatSeg").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.bgpat === type);
+      });
+      const needC2 = ["tricolor", "gradient", "stripes", "grid", "checker"].includes(type);
+      const needC3 = type === "tricolor";
+      const needDir = ["tricolor", "gradient", "stripes"].includes(type);
+      const needPitch = ["stripes", "grid", "checker"].includes(type);
+      const needSoft = type === "gradient";
+      $("bgC2Row").style.display = needC2 ? "" : "none";
+      $("bgC3Row").style.display = needC3 ? "" : "none";
+      $("bgDirWrap").style.display = needDir ? "" : "none";
+      $("bgPitchWrap").style.display = needPitch ? "" : "none";
+      $("bgSoftWrap").style.display = needSoft ? "" : "none";
+      $("bgPatOpts").style.display = type === "none" ? "none" : "";
+
+      [["bgC1Seg", pat.c1], ["bgC2Seg", pat.c2], ["bgC3Seg", pat.c3]].forEach(([id, col]) => {
+        const el = $(id);
+        if (!el) return;
+        el.querySelectorAll(".swatch").forEach((b) => {
+          b.classList.toggle("active", b.dataset.bgc === col);
+        });
+      });
+      $("bgDirSeg").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.bgdir === (pat.dir || "v"));
+      });
+      const pitch = Math.max(2, Number(pat.pitch) || 8);
+      $("bgPitch").value = String(pitch);
+      $("bgPitchVal").textContent = String(pitch);
+      $("bgSoftGrad").checked = pat.soft !== false;
+    }
+
+    function setBgPattern(patch, statusMsg) {
+      const prev = state.bgPattern || defaultBgPattern();
+      const next = { ...defaultBgPattern(), ...prev, ...patch };
+      // Sensible first-pick defaults when leaving 白底
+      if (patch.type === "solid" && prev.type === "none" && !patch.c1) next.c1 = "black";
+      if (patch.type === "gradient" && prev.type === "none") {
+        if (!patch.c1) next.c1 = "black";
+        if (!patch.c2) next.c2 = "white";
+      }
+      if (patch.type === "stripes" && prev.type === "none") {
+        if (!patch.c1) next.c1 = "black";
+        if (!patch.c2) next.c2 = "white";
+      }
+      if (patch.type === "tricolor" && prev.type === "none") {
+        next.c1 = patch.c1 || "black";
+        next.c2 = patch.c2 || "red";
+        next.c3 = patch.c3 || "white";
+      }
+      state.bgPattern = next;
+      // Pattern mode: drop uploaded image so pattern is visible.
+      if (patch.type && patch.type !== "none") {
+        state.bgImage = null;
+        state.bgDataUrl = null;
+        $("fileName").textContent = `图案 · ${state.bgPattern.type}`;
+      } else if (patch.type === "none" && !state.bgImage) {
+        $("fileName").textContent = "可空 · 图片优先于图案";
+      }
+      syncBgPatUi();
+      scheduleRender({ invalidateBg: true });
+      if (statusMsg) setStatus(statusMsg, "ok");
+    }
+
+    function bgOptsKey() {
+      const { width, height } = getSize();
+      const p = state.bgPattern || defaultBgPattern();
+      return [
+        width, height, state.fit, state.colorMode,
+        $("threshold").value, $("redSens").value, $("dither").checked ? 1 : 0,
+        state.bgDataUrl ? state.bgDataUrl.length : 0,
+        state.bgImage ? `${state.bgImage.naturalWidth}x${state.bgImage.naturalHeight}` : "none",
+        p.type, p.c1, p.c2, p.c3, p.dir, p.pitch, p.soft ? 1 : 0,
+      ].join("|");
+    }
+
+    function ensureBgCache(force) {
+      const { width, height } = getSize();
+      const key = bgOptsKey();
+      if (!force && state.bgCache && state.bgCacheKey === key &&
+          state.bgCache.width === width && state.bgCache.height === height) {
+        return state.bgCache;
+      }
+      const opts = {
+        colorMode: state.colorMode,
+        threshold: Number($("threshold").value),
+        dither: $("dither").checked,
+        redSens: Number($("redSens").value) / 100,
+      };
+      let img;
+      if (state.bgImage) {
+        const rgba = drawSourceToCanvas(state.bgImage, width, height, state.fit);
+        const { blackMask, redMask } = convertBgPlanes(rgba, opts);
+        img = masksToImageData(blackMask, redMask, width, height);
+      } else {
+        img = generatePatternBg(width, height, state.bgPattern || defaultBgPattern());
+      }
+      state.bgCache = img;
+      state.bgCacheKey = key;
+      return img;
+    }
+
+    /** preview=true: skip ink snap (faster drag) */
+    function composeDocument(mode = {}) {
+      const preview = !!mode.preview;
+      const { width, height } = getSize();
+      const opts = { colorMode: state.colorMode };
+
+      const base = document.createElement("canvas");
+      base.width = width;
+      base.height = height;
+      const bctx = base.getContext("2d");
+      bctx.putImageData(ensureBgCache(false), 0, 0);
+
+      const overlay = document.createElement("canvas");
+      overlay.width = width;
+      overlay.height = height;
+      const octx = overlay.getContext("2d");
+      octx.clearRect(0, 0, width, height);
+      drawLayersToCtx(octx, state.layers, opts.colorMode);
+      if (!preview) {
+        const odata = snapOverlayToInk(octx.getImageData(0, 0, width, height), opts.colorMode);
+        octx.putImageData(odata, 0, 0);
+      }
+      bctx.drawImage(overlay, 0, 0);
+      return bctx.getImageData(0, 0, width, height);
+    }
+
+    function imageDataToMasks(img) {
+      const n = img.width * img.height;
+      const blackMask = new Uint8Array(n);
+      const redMask = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const o = i * 4;
+        const r = img.data[o], g = img.data[o + 1], b = img.data[o + 2];
+        if (r > 150 && g < 100 && b < 100) redMask[i] = 1;
+        else if (r < 128 && g < 128 && b < 128) blackMask[i] = 1;
+      }
+      return { blackMask, redMask };
+    }
+
+    function packPlane(mask, width, height, msbFirst, inkIs1) {
+      const rowBytes = Math.ceil(width / 8);
+      const out = new Uint8Array(rowBytes * height);
+      let bi = 0;
+      for (let y = 0; y < height; y++) {
+        for (let xb = 0; xb < rowBytes; xb++) {
+          let byteVal = 0;
+          for (let bit = 0; bit < 8; bit++) {
+            const x = xb * 8 + bit;
+            if (x >= width) continue;
+            const ink = mask[y * width + x] === 1;
+            const set = inkIs1 ? ink : !ink;
+            if (set) byteVal |= msbFirst ? (0x80 >> bit) : (1 << bit);
+          }
+          out[bi++] = byteVal;
+        }
+      }
+      return out;
+    }
+
+    function buildPacked(blackBytes, redBytes, colorMode, planeOrder) {
+      if (colorMode !== "tricolor") return blackBytes;
+      const out = new Uint8Array(blackBytes.length + redBytes.length);
+      if (planeOrder === "red_first") {
+        out.set(redBytes, 0);
+        out.set(blackBytes, redBytes.length);
+      } else {
+        out.set(blackBytes, 0);
+        out.set(redBytes, blackBytes.length);
+      }
+      return out;
+    }
+
+    function buildSerialFrame(width, height, blackBytes, redBytes, opts) {
+      const redLen = opts.colorMode === "tricolor" ? redBytes.length : 0;
+      const payload = buildPacked(blackBytes, redBytes, opts.colorMode, opts.planeOrder);
+      const header = new ArrayBuffer(20);
+      const dv = new DataView(header);
+      dv.setUint8(0, 0x45); dv.setUint8(1, 0x50); dv.setUint8(2, 0x44); dv.setUint8(3, 0x31);
+      dv.setUint16(4, width, true);
+      dv.setUint16(6, height, true);
+      let flags = 0;
+      if (opts.colorMode === "tricolor") flags |= 0x01;
+      if (opts.inkIs1) flags |= 0x02;
+      if (opts.planeOrder === "red_first") flags |= 0x04;
+      if (opts.msbFirst) flags |= 0x08;
+      dv.setUint8(8, flags);
+      dv.setUint8(9, 0);
+      dv.setUint32(10, blackBytes.length, true);
+      dv.setUint32(14, redLen, true);
+      const frame = new Uint8Array(20 + payload.length);
+      frame.set(new Uint8Array(header), 0);
+      frame.set(payload, 20);
+      return frame;
+    }
+
+    function bytesToCArray(blackBytes, redBytes, colorMode, planeOrder) {
+      const { width, height } = getSize();
+      const name = ($("arrayName").value || "epd_image").trim() || "epd_image";
+      const msb = $("bitOrder").value === "msb";
+      let out = `// EPD ${width}x${height} · ${colorMode} · layers=${state.layers.length}\n`;
+      out += `// bit=${msb ? "MSB" : "LSB"} · polarity=${$("polarity").value} · planes=${planeOrder}\n`;
+      out += `// Generated by pi-lab EPD\n`;
+      const emit = (label, arr, arrName) => {
+        out += `\n// ${label} · ${arr.length} bytes\n`;
+        out += `const uint8_t ${arrName}[${arr.length}] = {\n`;
+        for (let i = 0; i < arr.length; i += 16) {
+          const slice = arr.slice(i, i + 16);
+          const hex = Array.from(slice).map((b) => `0x${b.toString(16).toUpperCase().padStart(2, "0")}`).join(", ");
+          out += `    ${hex}`;
+          if (i + 16 < arr.length) out += ",";
+          out += "\n";
+        }
+        out += "};\n";
+      };
+      if (colorMode === "tricolor") {
+        if (planeOrder === "red_first") {
+          emit("red plane", redBytes, `${name}_red`);
+          emit("black plane", blackBytes, `${name}_black`);
+        } else {
+          emit("black plane", blackBytes, `${name}_black`);
+          emit("red plane", redBytes, `${name}_red`);
+        }
+      } else emit("black plane", blackBytes, name);
+      return out;
+    }
+
+    function bytesToPlainHex(packed) {
+      const lines = [];
+      for (let i = 0; i < packed.length; i += 16) {
+        const slice = packed.slice(i, i + 16);
+        let hex = Array.from(slice).map((b) => `0x${b.toString(16).toUpperCase().padStart(2, "0")}`).join(", ");
+        if (i + 16 < packed.length) hex += ",";
+        lines.push(hex);
+      }
+      return lines.join("\n");
+    }
+
+    function layerBox(l) {
+      const h = l.type === "line" ? Math.max(l.h || 2, 8) : Math.max(l.h || 1, 1);
+      return { x: l.x, y: l.y, w: Math.max(l.w || 1, 1), h };
+    }
+
+    function hitTest(mx, my) {
+      for (let i = state.layers.length - 1; i >= 0; i--) {
+        const l = state.layers[i];
+        const b = layerBox(l);
+        if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) return l;
+      }
+      return null;
+    }
+
+    function getHandlePoints(l) {
+      const b = layerBox(l);
+      return {
+        nw: { x: b.x, y: b.y },
+        ne: { x: b.x + b.w, y: b.y },
+        sw: { x: b.x, y: b.y + b.h },
+        se: { x: b.x + b.w, y: b.y + b.h },
+      };
+    }
+
+    function hitHandle(mx, my, l) {
+      if (!l) return null;
+      const hitR = Math.max(6, 12 / (state.zoom || 1));
+      const pts = getHandlePoints(l);
+      for (const [name, pt] of Object.entries(pts)) {
+        if (Math.abs(mx - pt.x) <= hitR && Math.abs(my - pt.y) <= hitR) return name;
+      }
+      return null;
+    }
+
+    function drawSelection(ctx, l, zoom) {
+      if (!l) return;
+      const b = layerBox(l);
+      ctx.save();
+      ctx.strokeStyle = "#e8b84a";
+      ctx.lineWidth = Math.max(1, 1 / zoom);
+      ctx.setLineDash([4 / zoom, 3 / zoom]);
+      ctx.strokeRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
+      ctx.setLineDash([]);
+      const hs = Math.max(3.5, 6 / zoom);
+      Object.values(getHandlePoints(l)).forEach((pt) => {
+        ctx.fillStyle = "#e8b84a";
+        ctx.fillRect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
+        ctx.strokeStyle = "#1a1204";
+        ctx.lineWidth = Math.max(0.5, 1 / zoom);
+        ctx.strokeRect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
+      });
+      ctx.restore();
+    }
+
+    function applyResize(l, handle, mx, my, start) {
+      let x = start.x, y = start.y, w = start.w, h = start.h;
+      const minS = 8;
+      if (handle === "se") {
+        w = Math.max(minS, mx - x);
+        h = Math.max(minS, my - y);
+      } else if (handle === "sw") {
+        w = Math.max(minS, start.x + start.w - mx);
+        h = Math.max(minS, my - y);
+        x = start.x + start.w - w;
+      } else if (handle === "ne") {
+        w = Math.max(minS, mx - x);
+        h = Math.max(minS, start.y + start.h - my);
+        y = start.y + start.h - h;
+      } else if (handle === "nw") {
+        w = Math.max(minS, start.x + start.w - mx);
+        h = Math.max(minS, start.y + start.h - my);
+        x = start.x + start.w - w;
+        y = start.y + start.h - h;
+      }
+      l.x = Math.round(x);
+      l.y = Math.round(y);
+      l.w = Math.round(w);
+      l.h = Math.round(h);
+      if (["text", "pricegroup", "strike", "emoji", "badge"].includes(l.type)) {
+        const ratio = l.type === "badge" ? 0.5 : (l.type === "emoji" ? 0.85 : 0.72);
+        l.fontSize = Math.max(8, Math.round(l.h * ratio));
+      }
+      if (l.type === "line") {
+        l.stroke = Math.max(1, l.h);
+      }
+    }
+
+    function fitZoomToStage() {
+      const stage = $("screenStage");
+      if (!stage) return;
+      const { width, height } = getSize();
+      const availW = Math.max(80, stage.clientWidth - 36);
+      const availH = Math.max(80, stage.clientHeight - 36);
+      let z = Math.floor(Math.min(availW / width, availH / height));
+      z = Math.max(1, Math.min(12, z));
+      $("zoom").value = String(z);
+      state.zoom = z;
+      $("zoomLabel").textContent = `×${z}`;
+    }
+
+    function markExportDirty() {
+      state.exportDirty = true;
+      state.packed = null;
+      state.blackBytes = null;
+      state.redBytes = null;
+      enableActions(false);
+      const { width, height } = getSize();
+      const one = planeByteLen(width, height);
+      const expected = one * (state.colorMode === "tricolor" ? 2 : 1);
+      $("statBytes").innerHTML = `<b>${expected}</b> B?`;
+      $("previewMeta").textContent =
+        `${width}×${height} · ${state.colorMode} · ${state.layers.length} 层` +
+        (state.bgImage ? " · 有背景图" : (state.bgPattern && state.bgPattern.type !== "none" ? " · 图案背景" : "")) +
+        " · 输出待生成";
+    }
+
+    function paintView(preview) {
+      if (state.autoFitOnce) {
+        state.autoFitOnce = false;
+        fitZoomToStage();
+      }
+      const { width, height } = getSize();
+      const zoom = Number($("zoom").value) || 3;
+      state.zoom = zoom;
+      $("zoomLabel").textContent = `×${zoom}`;
+
+      const doc = composeDocument({ preview: !!preview || !!state.drag });
+      const view = $("viewCanvas");
+      view.width = width * zoom;
+      view.height = height * zoom;
+      const ctx = view.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      const tmp = document.createElement("canvas");
+      tmp.width = width;
+      tmp.height = height;
+      tmp.getContext("2d").putImageData(doc, 0, 0);
+      ctx.drawImage(tmp, 0, 0, view.width, view.height);
+      ctx.save();
+      ctx.scale(zoom, zoom);
+      drawSelection(ctx, selected(), zoom);
+      ctx.restore();
+
+      $("previewMeta").textContent =
+        `${width}×${height} · ${state.colorMode} · ${state.layers.length} 层` +
+        (state.bgImage ? " · 有背景图" : (state.bgPattern && state.bgPattern.type !== "none" ? " · 图案背景" : "")) +
+        (state.exportDirty ? " · 输出待生成" : "");
+      updateSizeStats();
+      scheduleDraftSave();
+    }
+
+    function generateOutput() {
+      ensureBgCache(true);
+      const { width, height } = getSize();
+      const doc = composeDocument({ preview: false });
+      const zoom = Number($("zoom").value) || 2;
+      state.zoom = zoom;
+      const view = $("viewCanvas");
+      view.width = width * zoom;
+      view.height = height * zoom;
+      const ctx = view.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      const tmp = document.createElement("canvas");
+      tmp.width = width;
+      tmp.height = height;
+      tmp.getContext("2d").putImageData(doc, 0, 0);
+      ctx.drawImage(tmp, 0, 0, view.width, view.height);
+      ctx.save();
+      ctx.scale(zoom, zoom);
+      drawSelection(ctx, selected(), zoom);
+      ctx.restore();
+
+      const { blackMask, redMask } = imageDataToMasks(doc);
+      const msbFirst = $("bitOrder").value === "msb";
+      const inkIs1 = $("polarity").value === "ink1";
+      const planeOrder = $("planeOrder").value;
+      state.blackBytes = packPlane(blackMask, width, height, msbFirst, inkIs1);
+      state.redBytes = state.colorMode === "tricolor"
+        ? packPlane(redMask, width, height, msbFirst, inkIs1)
+        : new Uint8Array(0);
+      state.packed = buildPacked(state.blackBytes, state.redBytes, state.colorMode, planeOrder);
+      state.exportDirty = false;
+      $("statBytes").innerHTML = `<b>${state.packed.length}</b> B`;
+      $("previewMeta").textContent =
+        `${width}×${height} · ${state.colorMode} · ${state.layers.length} 层` +
+        (state.bgImage ? " · 有背景图" : (state.bgPattern && state.bgPattern.type !== "none" ? " · 图案背景" : "")) +
+        " · 输出已生成";
+      updateOutputDisplay();
+      enableActions(true);
+      setStatus(`输出已生成 ${state.packed.length} B`, "ok");
+    }
+
+    function updateOutputDisplay() {
+      if (!state.packed || !state.blackBytes) return;
+      const fmt = document.querySelector('input[name="fmt"]:checked').value;
+      $("output").value = fmt === "c_array"
+        ? bytesToCArray(state.blackBytes, state.redBytes || new Uint8Array(0), state.colorMode, $("planeOrder").value)
+        : bytesToPlainHex(state.packed);
+    }
+
+    function enableActions(has) {
+      $("btnCopy").disabled = !has;
+      $("btnDlBin").disabled = !has;
+      $("btnDlC").disabled = !has;
+      $("btnSend").disabled = !has || !state.writer;
+    }
+
+    function scheduleRender(opts = {}) {
+      const live = !!(opts && opts.live);
+      if (live) {
+        if (state.raf) return;
+        state.raf = requestAnimationFrame(() => {
+          state.raf = null;
+          paintView(true);
+        });
+        return;
+      }
+      if (state.timer) clearTimeout(state.timer);
+      state.timer = setTimeout(() => {
+        markExportDirty();
+        if (opts.invalidateBg) state.bgCacheKey = "";
+        paintView(false);
+      }, 50);
+    }
+
+    function addLayer(type) {
+      const l = defaultLayer(type);
+      state.layers.push(l);
+      selectLayer(l.id);
+      scheduleRender();
+      setStatus(`已添加 ${type}`, "ok");
+    }
+
+    function applyTemplate(name) {
+      const { width, height } = getSize();
+      state.layers = [];
+      state.activeTemplate = name;
+      const landscape = width >= height;
+      const m = Math.min(width, height);
+      const long = Math.max(width, height);
+      const pad = Math.max(4, Math.round(m * 0.05));
+      $("pokerPanel").style.display = name === "poker" ? "" : "none";
+
+      if (name === "poker") {
+        applyPokerCard();
+        return;
+      }
+
+      if (name === "smoke") {
+        // 2.9" smoke: B|R|W bands along short axis of panel orientation
+        if (landscape) {
+          const band = Math.floor(height / 3);
+          state.layers.push({ ...defaultLayer("rect"), x: 0, y: 0, w: width, h: band, fill: true, color: "black" });
+          state.layers.push({ ...defaultLayer("rect"), x: 0, y: band, w: width, h: band, fill: true, color: "red" });
+          state.layers.push({ ...defaultLayer("rect"), x: 0, y: band * 2, w: width, h: height - band * 2, fill: true, color: "white" });
+        } else {
+          const band = Math.floor(width / 3);
+          state.layers.push({ ...defaultLayer("rect"), x: 0, y: 0, w: band, h: height, fill: true, color: "black" });
+          state.layers.push({ ...defaultLayer("rect"), x: band, y: 0, w: band, h: height, fill: true, color: "red" });
+          state.layers.push({ ...defaultLayer("rect"), x: band * 2, y: 0, w: width - band * 2, h: height, fill: true, color: "white" });
+        }
+        state.layers.push({
+          ...defaultLayer("roundrect"),
+          x: 0, y: 0, w: width, h: height,
+          radius: 0, stroke: Math.max(1, Math.round(m / 80)),
+          color: "black", fill: false,
+        });
+      } else if (name === "gfx") {
+        const fs = Math.max(10, Math.round(m * 0.08));
+        state.layers.push({
+          ...defaultLayer("rect"), x: 0, y: 0, w: width, h: Math.max(3, Math.round(m * 0.02)),
+          fill: true, color: "black",
+        });
+        state.layers.push({
+          ...defaultLayer("text"), text: "GFX/ICON TEST",
+          x: pad, y: pad + Math.round(m * 0.02),
+          w: width - pad * 2, h: Math.round(fs * 1.4),
+          fontSize: fs, color: "black", fontKey: "body", fontWeight: "700", align: "left",
+        });
+        const box = Math.round(m * 0.22);
+        const y0 = pad + Math.round(m * 0.18);
+        state.layers.push({
+          ...defaultLayer("rect"),
+          x: pad, y: y0, w: box, h: box, fill: true, color: "black",
+        });
+        state.layers.push({
+          ...defaultLayer("roundrect"),
+          x: pad + box + Math.round(m * 0.06), y: y0, w: box, h: box,
+          radius: Math.round(m * 0.03), stroke: Math.max(1, Math.round(m / 90)),
+          color: "black", fill: false,
+        });
+        state.layers.push({
+          ...defaultLayer("emoji"), text: "♥",
+          x: pad, y: y0 + box + Math.round(m * 0.08),
+          w: Math.round(m * 0.14), h: Math.round(m * 0.14),
+          fontSize: Math.round(m * 0.12), color: "red",
+        });
+        state.layers.push({
+          ...defaultLayer("text"), text: "GFX TEST OK",
+          x: pad, y: height - pad - Math.round(fs * 1.5),
+          w: width - pad * 2, h: Math.round(fs * 1.4),
+          fontSize: fs, color: "black", fontKey: "body", fontWeight: "700",
+        });
+      } else if (name === "price_tag") {
+        state.layers.push({
+          ...defaultLayer("roundrect"),
+          x: pad, y: pad, w: width - pad * 2, h: height - pad * 2,
+          radius: Math.max(3, Math.round(m * 0.025)),
+          stroke: Math.max(1, Math.round(m / 110)),
+          color: "black", fill: false,
+        });
+        if (landscape) {
+          const titleFs = Math.max(11, Math.round(m * 0.12));
+          const priceFs = Math.max(28, Math.round(m * 0.42));
+          state.layers.push({
+            ...defaultLayer("text"), text: "精选商品",
+            x: pad * 2, y: pad * 2,
+            w: Math.round(width * 0.4), h: Math.round(titleFs * 1.4),
+            fontSize: titleFs, color: "black", align: "left", fontKey: "body", fontWeight: "700",
+          });
+          state.layers.push({
+            ...defaultLayer("pricegroup"), text: "12.90", currency: "¥", currencyPos: "topleft",
+            x: Math.round(width * 0.38), y: Math.round((height - priceFs * 1.1) / 2),
+            w: Math.round(width * 0.58), h: Math.round(priceFs * 1.15),
+            fontSize: priceFs, color: "red", fontKey: "price", fontWeight: "900",
+          });
+        } else {
+          const titleFs = Math.max(12, Math.round(height * 0.055));
+          const priceFs = Math.max(36, Math.round(height * 0.28));
+          state.layers.push({
+            ...defaultLayer("text"), text: "精选商品",
+            x: pad + Math.round(pad * 0.6), y: pad + Math.round(pad * 0.55),
+            w: width - pad * 3, h: Math.round(titleFs * 1.45),
+            fontSize: titleFs, color: "black", align: "left", fontKey: "body", fontWeight: "700",
+          });
+          state.layers.push({
+            ...defaultLayer("pricegroup"), text: "12.90", currency: "¥", currencyPos: "topleft",
+            x: pad + Math.round(pad * 0.5), y: Math.round(height * 0.36),
+            w: width - pad * 2.5, h: Math.round(priceFs * 1.15),
+            fontSize: priceFs, color: "red", fontKey: "price", fontWeight: "900",
+          });
+        }
+      } else if (name === "promo") {
+        state.layers.push({
+          ...defaultLayer("rect"), x: 0, y: 0, w: width, h: height, fill: true, color: "black",
+        });
+        const inset = Math.max(4, Math.round(m * 0.05));
+        if (landscape) {
+          state.layers.push({
+            ...defaultLayer("rect"),
+            x: inset, y: inset, w: Math.round(width * 0.55), h: height - inset * 2,
+            fill: false, color: "red", stroke: Math.max(2, Math.round(m / 55)),
+          });
+          state.layers.push({
+            ...defaultLayer("text"), text: "限时特惠",
+            x: inset * 2, y: Math.round(height * 0.22),
+            w: Math.round(width * 0.5), h: Math.round(m * 0.35),
+            fontSize: Math.max(18, Math.round(m * 0.28)),
+            color: "red", align: "center", fontKey: "body", fontWeight: "900",
+          });
+          state.layers.push({
+            ...defaultLayer("text"), text: "全场低至 5 折",
+            x: Math.round(width * 0.58), y: Math.round(height * 0.35),
+            w: Math.round(width * 0.38), h: Math.round(m * 0.28),
+            fontSize: Math.max(12, Math.round(m * 0.14)),
+            color: "white", align: "center", fontKey: "body", fontWeight: "700",
+          });
+        } else {
+          state.layers.push({
+            ...defaultLayer("rect"),
+            x: inset, y: Math.round(height * 0.12),
+            w: width - inset * 2, h: Math.round(height * 0.48),
+            fill: false, color: "red", stroke: Math.max(2, Math.round(m / 60)),
+          });
+          state.layers.push({
+            ...defaultLayer("text"), text: "限时特惠",
+            x: inset, y: Math.round(height * 0.2),
+            w: width - inset * 2, h: Math.round(height * 0.32),
+            fontSize: Math.max(20, Math.round(height * 0.18)),
+            color: "red", align: "center", fontKey: "body", fontWeight: "900",
+          });
+          state.layers.push({
+            ...defaultLayer("text"), text: "全场低至 5 折",
+            x: inset, y: Math.round(height * 0.68),
+            w: width - inset * 2, h: Math.round(height * 0.16),
+            fontSize: Math.max(12, Math.round(height * 0.08)),
+            color: "white", align: "center", fontKey: "body", fontWeight: "700",
+          });
+        }
+      } else if (name === "strike") {
+        if (landscape) {
+          const strikeSize = Math.max(14, Math.round(m * 0.16));
+          const saleSize = Math.max(28, Math.round(m * 0.4));
+          state.layers.push({
+            ...defaultLayer("text"), text: "原价",
+            x: pad, y: pad, w: Math.round(width * 0.2), h: Math.round(m * 0.14),
+            fontSize: Math.max(10, Math.round(m * 0.1)), color: "black", fontKey: "body", fontWeight: "400",
+          });
+          state.layers.push({
+            ...defaultLayer("strike"), text: "29.90", currency: "¥", currencyPos: "baseline",
+            x: pad, y: Math.round(height * 0.28),
+            w: Math.round(width * 0.35), h: Math.round(strikeSize * 1.3),
+            fontSize: strikeSize, color: "black", fontKey: "price", fontWeight: "700",
+          });
+          state.layers.push({
+            ...defaultLayer("pricegroup"), text: "19.90", currency: "¥", currencyPos: "topleft",
+            x: Math.round(width * 0.4), y: Math.round((height - saleSize) / 2),
+            w: Math.round(width * 0.55), h: Math.round(saleSize * 1.15),
+            fontSize: saleSize, color: "red", fontKey: "price", fontWeight: "900",
+          });
+        } else {
+          const strikeSize = Math.max(14, Math.round(height * 0.09));
+          const saleSize = Math.max(36, Math.round(height * 0.28));
+          state.layers.push({
+            ...defaultLayer("text"), text: "原价",
+            x: pad, y: Math.round(height * 0.08),
+            w: Math.round(width * 0.35), h: Math.round(height * 0.08),
+            fontSize: Math.max(11, Math.round(height * 0.05)), color: "black", fontKey: "body", fontWeight: "400",
+          });
+          state.layers.push({
+            ...defaultLayer("strike"), text: "29.90", currency: "¥", currencyPos: "baseline",
+            x: pad, y: Math.round(height * 0.18),
+            w: Math.round(width * 0.5), h: Math.round(strikeSize * 1.3),
+            fontSize: strikeSize, color: "black", fontKey: "price", fontWeight: "700",
+          });
+          state.layers.push({
+            ...defaultLayer("pricegroup"), text: "19.90", currency: "¥", currencyPos: "topleft",
+            x: pad, y: Math.round(height * 0.42),
+            w: width - pad * 2, h: Math.round(saleSize * 1.15),
+            fontSize: saleSize, color: "red", fontKey: "price", fontWeight: "900",
+          });
+        }
+      }
+      selectLayer(state.layers[state.layers.length - 1]?.id || null);
+      scheduleRender();
+      setStatus(`已套用模板 ${name} · ${width}×${height}`, "ok");
+    }
+
+    // —— inline edit ——
+    function beginInlineEdit(layer) {
+      if (!layer || !(layer.type === "text" || layer.type === "currency" || layer.type === "price" || layer.type === "pricegroup" || layer.type === "strike" || layer.type === "badge" || layer.type === "emoji")) return;
+      state.editingId = layer.id;
+      const ed = $("inlineEdit");
+      const zoom = state.zoom;
+      ed.style.display = "block";
+      ed.style.left = `${10 + layer.x * zoom}px`;
+      ed.style.top = `${10 + layer.y * zoom}px`;
+      ed.style.width = `${Math.max(40, layer.w * zoom)}px`;
+      ed.style.height = `${Math.max(24, layer.h * zoom)}px`;
+      ed.style.fontSize = `${layer.fontSize * zoom}px`;
+      ed.style.fontFamily = fontCss(layer);
+      ed.style.fontWeight = layer.fontWeight || "700";
+      ed.style.textAlign = layer.align || "left";
+      ed.style.color = layer.color === "red" ? "#c43c3c" : layer.color === "white" ? "#fff" : "#111";
+      ed.style.background = layer.color === "white" ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.92)";
+      ed.value = layer.text || "";
+      ed.focus();
+      ed.select();
+    }
+
+    function endInlineEdit(apply) {
+      const ed = $("inlineEdit");
+      if (state.editingId && apply) {
+        const l = state.layers.find((x) => x.id === state.editingId);
+        if (l) {
+          l.text = ed.value;
+          syncPropPanel();
+          renderLayerList();
+          scheduleRender();
+        }
+      }
+      state.editingId = null;
+      ed.style.display = "none";
+    }
+
+    // —— draft / json ——
+    function serializeProject() {
+      return {
+        version: 1,
+        width: getSize().width,
+        height: getSize().height,
+        colorMode: state.colorMode,
+        fit: state.fit,
+        layers: state.layers,
+        bgDataUrl: state.bgDataUrl,
+        bgPattern: state.bgPattern || defaultBgPattern(),
+        settings: {
+          threshold: Number($("threshold").value),
+          redSens: Number($("redSens").value),
+          dither: $("dither").checked,
+          bitOrder: $("bitOrder").value,
+          planeOrder: $("planeOrder").value,
+          polarity: $("polarity").value,
+          arrayName: $("arrayName").value,
+        },
+        uid: state.uid,
+      };
+    }
+
+    function scheduleDraftSave() {
+      if (state.draftTimer) clearTimeout(state.draftTimer);
+      state.draftTimer = setTimeout(() => {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeProject()));
+        } catch (_) {}
+      }, 400);
+    }
+
+    function loadBgFromDataUrl(dataUrl) {
+      return new Promise((resolve) => {
+        if (!dataUrl) {
+          state.bgImage = null;
+          state.bgDataUrl = null;
+          resolve();
+          return;
+        }
+        const img = new Image();
+        img.onload = () => {
+          state.bgImage = img;
+          state.bgDataUrl = dataUrl;
+          $("fileName").textContent = `图片 · ${img.naturalWidth}×${img.naturalHeight}（覆盖图案）`;
+          resolve();
+        };
+        img.onerror = () => {
+          state.bgImage = null;
+          state.bgDataUrl = null;
+          resolve();
+        };
+        img.src = dataUrl;
+      });
+    }
+
+    async function applyProject(proj) {
+      if (!proj || !proj.version) return;
+      state.syncingPreset = true;
+      $("width").value = proj.width || 400;
+      $("height").value = proj.height || 300;
+      state.syncingPreset = false;
+      state.colorMode = proj.colorMode || "tricolor";
+      state.fit = proj.fit || "contain";
+      state.bgPattern = { ...defaultBgPattern(), ...(proj.bgPattern || {}) };
+      state.layers = Array.isArray(proj.layers) ? proj.layers : [];
+      state.uid = proj.uid || (state.layers.length + 1);
+      state.selectedId = null;
+      $("colorSeg").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.colorMode === state.colorMode);
+      });
+      $("fitSeg").querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.fit === state.fit);
+      });
+      if (proj.settings) {
+        $("threshold").value = proj.settings.threshold ?? 128;
+        $("thresholdVal").textContent = $("threshold").value;
+        $("redSens").value = proj.settings.redSens ?? 35;
+        $("redSensVal").textContent = (Number($("redSens").value) / 100).toFixed(2);
+        $("dither").checked = proj.settings.dither !== false;
+        if (proj.settings.bitOrder) $("bitOrder").value = proj.settings.bitOrder;
+        if (proj.settings.planeOrder) $("planeOrder").value = proj.settings.planeOrder;
+        if (proj.settings.polarity) $("polarity").value = proj.settings.polarity;
+        if (proj.settings.arrayName) $("arrayName").value = proj.settings.arrayName;
+      }
+      await loadBgFromDataUrl(proj.bgDataUrl || null);
+      if (!proj.bgDataUrl) {
+        $("fileName").textContent = state.bgPattern && state.bgPattern.type !== "none"
+          ? `图案 · ${state.bgPattern.type}`
+          : "可空 · 图片优先于图案";
+      }
+      syncBgPatUi();
+      syncPresetFromSize();
+      renderLayerList();
+      syncPropPanel();
+      scheduleRender({ invalidateBg: true });
+    }
+
+    function loadDraft() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return Promise.resolve(false);
+        return applyProject(JSON.parse(raw)).then(() => true);
+      } catch (_) {
+        return Promise.resolve(false);
+      }
+    }
+
+    // —— file / bg ——
+    function isImageFile(file) {
+      if (!file) return false;
+      if (file.type && file.type.startsWith("image/")) return true;
+      return /\.(png|jpe?g|bmp|gif|webp)$/i.test(file.name || "");
+    }
+
+    function loadFile(file) {
+      if (!isImageFile(file)) {
+        setStatus("非图片文件", "warn");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        loadBgFromDataUrl(reader.result).then(() => {
+          setStatus("背景已加载", "ok");
+          scheduleRender({ invalidateBg: true });
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // —— serial ——
+    function serialSupported() {
+      const insecure = location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1";
+      return "serial" in navigator && !insecure;
+    }
+
+    async function pickPort() {
+      if (!serialSupported()) {
+        setSerialStatus("需 HTTPS/本机", "warn");
+        return;
+      }
+      try {
+        state.port = await navigator.serial.requestPort();
+        $("btnOpenPort").disabled = false;
+        setSerialStatus("已选端口", "ok");
+      } catch (e) {
+        if (e && e.name !== "NotFoundError") setSerialStatus("选口失败", "err");
+      }
+    }
+
+    async function openPort() {
+      if (!state.port) return;
+      try {
+        await state.port.open({ baudRate: Number($("baud").value) });
+        state.writer = state.port.writable.getWriter();
+        $("btnOpenPort").disabled = true;
+        $("btnClosePort").disabled = false;
+        $("btnPickPort").disabled = true;
+        enableActions(!!state.packed);
+        setSerialStatus("已打开", "ok");
+      } catch (e) {
+        setSerialStatus("打开失败", "err");
+      }
+    }
+
+    async function closePort() {
+      try {
+        if (state.writer) { try { state.writer.releaseLock(); } catch (_) {} state.writer = null; }
+        if (state.port) await state.port.close();
+      } catch (_) {}
+      $("btnOpenPort").disabled = !state.port;
+      $("btnClosePort").disabled = true;
+      $("btnPickPort").disabled = false;
+      enableActions(!!state.packed);
+      setSerialStatus("已关闭", "ok");
+    }
+
+    async function sendSerial() {
+      if (!state.packed || !state.blackBytes) return;
+      if (!state.writer) { setStatus("请先打开串口", "warn"); return; }
+      const { width, height } = getSize();
+      const frame = buildSerialFrame(width, height, state.blackBytes, state.redBytes || new Uint8Array(0), {
+        colorMode: state.colorMode,
+        inkIs1: $("polarity").value === "ink1",
+        planeOrder: $("planeOrder").value,
+        msbFirst: $("bitOrder").value === "msb",
+      });
+      if (!$("serialEnableSend").checked) {
+        setStatus(`未勾选实发 · 帧 ${frame.length} B`, "warn");
+        return;
+      }
+      try {
+        await state.writer.write(frame);
+        setStatus(`已发送 ${frame.length} B`, "ok");
+      } catch (_) {
+        setStatus("发送失败", "err");
+      }
+    }
+
+    function downloadBlob(blob, filename) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus(`已下载 ${filename}`, "ok");
+    }
+
+    function clearAll() {
+      endInlineEdit(false);
+      state.layers = [];
+      state.selectedId = null;
+      state.bgImage = null;
+      state.bgDataUrl = null;
+      state.bgPattern = defaultBgPattern();
+      state.packed = null;
+      $("fileInput").value = "";
+      $("fileName").textContent = "可空 · 图片优先于图案";
+      syncBgPatUi();
+      $("output").value = "";
+      state.bgCache = null;
+      state.bgCacheKey = "";
+      renderLayerList();
+      syncPropPanel();
+      markExportDirty();
+      enableActions(false);
+      scheduleRender();
+      setStatus("已清空", "ok");
+    }
+
+    // —— pointer on canvas ——
+    const viewCanvas = $("viewCanvas");
+
+    function canvasPos(e) {
+      const rect = viewCanvas.getBoundingClientRect();
+      const zoom = state.zoom;
+      return {
+        x: (e.clientX - rect.left) / zoom,
+        y: (e.clientY - rect.top) / zoom,
+      };
+    }
+
+    viewCanvas.addEventListener("pointerdown", (e) => {
+      if (state.editingId) endInlineEdit(true);
+      const p = canvasPos(e);
+      const cur = selected();
+      const handle = cur ? hitHandle(p.x, p.y, cur) : null;
+      if (handle && cur) {
+        state.drag = {
+          mode: "resize",
+          id: cur.id,
+          handle,
+          start: { x: cur.x, y: cur.y, w: cur.w, h: cur.h },
+        };
+        viewCanvas.setPointerCapture(e.pointerId);
+        viewCanvas.style.cursor = handle + "-resize";
+        return;
+      }
+      const hit = hitTest(p.x, p.y);
+      if (hit) {
+        selectLayer(hit.id);
+        state.drag = { mode: "move", id: hit.id, ox: p.x - hit.x, oy: p.y - hit.y };
+        viewCanvas.setPointerCapture(e.pointerId);
+        viewCanvas.style.cursor = "move";
+      } else {
+        selectLayer(null);
+      }
+    });
+
+    viewCanvas.addEventListener("pointermove", (e) => {
+      const p = canvasPos(e);
+      if (!state.drag) {
+        const cur = selected();
+        const handle = cur ? hitHandle(p.x, p.y, cur) : null;
+        if (handle) viewCanvas.style.cursor = handle + "-resize";
+        else if (hitTest(p.x, p.y)) viewCanvas.style.cursor = "move";
+        else viewCanvas.style.cursor = "default";
+        return;
+      }
+      const l = state.layers.find((x) => x.id === state.drag.id);
+      if (!l) return;
+      if (state.drag.mode === "resize") {
+        applyResize(l, state.drag.handle, p.x, p.y, state.drag.start);
+      } else {
+        l.x = Math.round(p.x - state.drag.ox);
+        l.y = Math.round(p.y - state.drag.oy);
+      }
+      scheduleRender({ live: true });
+    });
+
+    function endDrag() {
+      if (!state.drag) return;
+      state.drag = null;
+      viewCanvas.style.cursor = "default";
+      syncPropPanel();
+      markExportDirty();
+      scheduleDraftSave();
+    }
+    viewCanvas.addEventListener("pointerup", endDrag);
+    viewCanvas.addEventListener("pointercancel", endDrag);
+
+    viewCanvas.addEventListener("dblclick", (e) => {
+      const p = canvasPos(e);
+      const hit = hitTest(p.x, p.y);
+      if (hit) beginInlineEdit(hit);
+    });
+
+    // —— wire UI ——
+    const presetEl = $("preset");
+    PRESETS.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.value;
+      opt.textContent = p.label;
+      presetEl.appendChild(opt);
+    });
+    presetEl.value = "128x296";
+
+    document.querySelectorAll("[data-tpl]").forEach((btn) => {
+      btn.addEventListener("click", () => applyTemplate(btn.dataset.tpl));
+    });
+
+    POKER_RANKS.forEach((r) => {
+      const opt = document.createElement("option");
+      opt.value = r;
+      opt.textContent = r;
+      $("pokerRank").appendChild(opt);
+    });
+    $("pokerRank").value = state.pokerRank;
+    $("pokerSuitRow").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-psuit]");
+      if (!btn) return;
+      state.pokerSuit = btn.dataset.psuit;
+      applyPokerCard();
+    });
+    $("pokerRank").addEventListener("change", () => {
+      state.pokerRank = $("pokerRank").value;
+      applyPokerCard();
+    });
+    $("btnPokerApply").addEventListener("click", applyPokerCard);
+    $("btnPokerPrev").addEventListener("click", () => {
+      setPokerFromIndex(pokerIndex() - 1);
+      applyPokerCard();
+    });
+    $("btnPokerNext").addEventListener("click", () => {
+      setPokerFromIndex(pokerIndex() + 1);
+      applyPokerCard();
+    });
+    document.querySelectorAll("[data-add]").forEach((btn) => {
+      btn.addEventListener("click", () => addLayer(btn.dataset.add));
+    });
+    document.querySelectorAll("[data-emoji]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const l = defaultLayer("emoji");
+        l.text = btn.dataset.emoji;
+        state.layers.push(l);
+        selectLayer(l.id);
+        scheduleRender();
+        setStatus(`已添加 ${l.text}`, "ok");
+      });
+    });
+    $("btnFitZoom").addEventListener("click", () => {
+      fitZoomToStage();
+      scheduleRender({ live: true });
+    });
+
+    $("btnDup").addEventListener("click", () => {
+      const l = selected();
+      if (!l) return;
+      const copy = { ...l, id: uid(), x: l.x + 8, y: l.y + 8 };
+      state.layers.push(copy);
+      selectLayer(copy.id);
+      scheduleRender();
+    });
+    $("btnDel").addEventListener("click", () => {
+      const id = state.selectedId;
+      if (!id) return;
+      state.layers = state.layers.filter((l) => l.id !== id);
+      selectLayer(null);
+      scheduleRender();
+    });
+
+    $("fitSeg").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-fit]");
+      if (!btn) return;
+      state.fit = btn.dataset.fit;
+      $("fitSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+      scheduleRender({ invalidateBg: true });
+    });
+
+    $("colorSeg").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-color-mode]");
+      if (!btn) return;
+      state.colorMode = btn.dataset.colorMode;
+      $("colorSeg").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+      state.layers.forEach((l) => {
+        if (state.colorMode === "bw" && l.color === "red") l.color = "black";
+      });
+      syncPropPanel();
+      scheduleRender({ invalidateBg: true });
+    });
+
+    $("preset").addEventListener("change", () => {
+      if (!state.syncingPreset) applyPreset($("preset").value);
+    });
+    function onSizeInput() {
+      if (state.syncingPreset) return;
+      syncPresetFromSize();
+      state.autoFitOnce = true;
+      if (state.activeTemplate) {
+        applyTemplate(state.activeTemplate);
+      } else {
+        scheduleRender({ invalidateBg: true });
+      }
+    }
+    $("width").addEventListener("change", onSizeInput);
+    $("height").addEventListener("change", onSizeInput);
+    $("btnSwap").addEventListener("click", () => {
+      const w = $("width").value;
+      $("width").value = $("height").value;
+      $("height").value = w;
+      syncPresetFromSize();
+      scheduleRender({ invalidateBg: true });
+    });
+
+    ["propText", "propSize", "propWeight", "propFont", "propFontCustom", "propX", "propY", "propW", "propH", "propStroke", "propRadius", "propFill"].forEach((id) => {
+      $(id).addEventListener("input", applyPropsFromPanel);
+      $(id).addEventListener("change", applyPropsFromPanel);
+    });
+    $("colorSwatches").addEventListener("click", (e) => {
+      const btn = e.target.closest(".swatch");
+      if (!btn) return;
+      const l = selected();
+      if (!l) return;
+      l.color = btn.dataset.color;
+      syncPropPanel();
+      scheduleRender();
+    });
+    $("alignSeg").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-align]");
+      if (!btn) return;
+      const l = selected();
+      if (!l) return;
+      l.align = btn.dataset.align;
+      syncPropPanel();
+      scheduleRender();
+    });
+    $("curPosSeg").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-curpos]");
+      if (!btn) return;
+      const l = selected();
+      if (!l) return;
+      l.currencyPos = btn.dataset.curpos;
+      syncPropPanel();
+      scheduleRender();
+    });
+    document.querySelectorAll("[data-curinsert]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const l = selected();
+        if (!l || (l.type !== "pricegroup" && l.type !== "strike")) return;
+        l.currency = btn.dataset.curinsert;
+        $("propCurrency").value = l.currency;
+        scheduleRender();
+      });
+    });
+    $("propCurrency").addEventListener("input", applyPropsFromPanel);
+
+    $("threshold").addEventListener("input", () => {
+      $("thresholdVal").textContent = $("threshold").value;
+      scheduleRender({ invalidateBg: true });
+    });
+    $("redSens").addEventListener("input", () => {
+      $("redSensVal").textContent = (Number($("redSens").value) / 100).toFixed(2);
+      scheduleRender({ invalidateBg: true });
+    });
+    $("dither").addEventListener("change", () => scheduleRender({ invalidateBg: true }));
+    ["bitOrder", "planeOrder", "polarity"].forEach((id) => $(id).addEventListener("change", () => {
+      markExportDirty();
+      setStatus("编码已改 · 请重新生成输出", "warn");
+    }));
+    $("arrayName").addEventListener("input", () => {
+      if (!state.exportDirty && state.packed) updateOutputDisplay();
+    });
+    document.querySelectorAll('input[name="fmt"]').forEach((el) => {
+      el.addEventListener("change", () => {
+        if (!state.exportDirty && state.packed) updateOutputDisplay();
+      });
+    });
+
+    $("zoom").addEventListener("input", () => scheduleRender({ live: true }));
+    $("zoomIn").addEventListener("click", () => {
+      $("zoom").value = Math.min(12, Number($("zoom").value) + 1);
+      scheduleRender({ live: true });
+    });
+    $("zoomOut").addEventListener("click", () => {
+      $("zoom").value = Math.max(1, Number($("zoom").value) - 1);
+      scheduleRender({ live: true });
+    });
+    window.addEventListener("resize", () => {
+      /* keep user zoom; only hint */
+    });
+
+    const dropZone = $("dropZone");
+    const fileInput = $("fileInput");
+    dropZone.addEventListener("click", () => { fileInput.value = ""; fileInput.click(); });
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (f) loadFile(f);
+    });
+    ["dragenter", "dragover"].forEach((ev) => {
+      dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add("drag"); });
+      $("screenStage").addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add("drag"); });
+    });
+    ["dragleave", "drop"].forEach((ev) => {
+      const handler = (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("drag");
+        if (ev === "drop") {
+          const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (f) loadFile(f);
+        }
+      };
+      dropZone.addEventListener(ev, handler);
+      $("screenStage").addEventListener(ev, handler);
+    });
+    $("btnClearBg").addEventListener("click", () => {
+      state.bgImage = null;
+      state.bgDataUrl = null;
+      $("fileName").textContent = state.bgPattern && state.bgPattern.type !== "none"
+        ? `图案 · ${state.bgPattern.type}`
+        : "可空 · 图片优先于图案";
+      scheduleRender({ invalidateBg: true });
+    });
+
+    $("bgPatSeg").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-bgpat]");
+      if (!btn) return;
+      setBgPattern({ type: btn.dataset.bgpat }, `背景 · ${btn.dataset.bgpat}`);
+    });
+    function wireBgSwatch(segId, key) {
+      $(segId).addEventListener("click", (e) => {
+        const btn = e.target.closest(".swatch");
+        if (!btn) return;
+        setBgPattern({ [key]: btn.dataset.bgc });
+      });
+    }
+    wireBgSwatch("bgC1Seg", "c1");
+    wireBgSwatch("bgC2Seg", "c2");
+    wireBgSwatch("bgC3Seg", "c3");
+    $("bgDirSeg").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-bgdir]");
+      if (!btn) return;
+      setBgPattern({ dir: btn.dataset.bgdir });
+    });
+    $("bgPitch").addEventListener("input", () => {
+      const pitch = Number($("bgPitch").value) || 8;
+      $("bgPitchVal").textContent = String(pitch);
+      setBgPattern({ pitch });
+    });
+    $("bgSoftGrad").addEventListener("change", () => {
+      setBgPattern({ soft: $("bgSoftGrad").checked });
+    });
+    syncBgPatUi();
+
+    $("inlineEdit").addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); endInlineEdit(false); }
+      if (e.key === "Enter" && !e.shiftKey && selected()?.type !== "text") {
+        e.preventDefault();
+        endInlineEdit(true);
+      }
+    });
+    $("inlineEdit").addEventListener("blur", () => endInlineEdit(true));
+
+    $("btnBuild").addEventListener("click", generateOutput);
+    $("btnBuild2").addEventListener("click", generateOutput);
+
+    $("btnCopy").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText($("output").value); setStatus("已复制", "ok"); }
+      catch { $("output").select(); document.execCommand("copy"); setStatus("已复制", "ok"); }
+    });
+    $("btnDlBin").addEventListener("click", () => {
+      if (!state.packed) return;
+      const name = ($("arrayName").value || "epd_image").trim() || "epd_image";
+      downloadBlob(new Blob([state.packed], { type: "application/octet-stream" }), `${name}.bin`);
+    });
+    $("btnDlC").addEventListener("click", () => {
+      if (!state.blackBytes) return;
+      const name = ($("arrayName").value || "epd_image").trim() || "epd_image";
+      const text = bytesToCArray(state.blackBytes, state.redBytes || new Uint8Array(0), state.colorMode, $("planeOrder").value);
+      downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), `${name}.h`);
+    });
+    $("btnSaveJson").addEventListener("click", () => {
+      const name = ($("arrayName").value || "epd_project").trim() || "epd_project";
+      downloadBlob(new Blob([JSON.stringify(serializeProject(), null, 2)], { type: "application/json" }), `${name}.json`);
+    });
+    $("btnLoadJson").addEventListener("click", () => { $("jsonInput").value = ""; $("jsonInput").click(); });
+    $("jsonInput").addEventListener("change", () => {
+      const f = $("jsonInput").files && $("jsonInput").files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          applyProject(JSON.parse(reader.result));
+          setStatus("工程已导入", "ok");
+        } catch {
+          setStatus("JSON 无效", "err");
+        }
+      };
+      reader.readAsText(f);
+    });
+    $("btnSend").addEventListener("click", sendSerial);
+    $("btnClear").addEventListener("click", clearAll);
+    $("btnPickPort").addEventListener("click", pickPort);
+    $("btnOpenPort").addEventListener("click", openPort);
+    $("btnClosePort").addEventListener("click", closePort);
+
+    document.addEventListener("keydown", (e) => {
+      if (state.editingId) return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selected() && e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA" && e.target.tagName !== "SELECT") {
+        e.preventDefault();
+        $("btnDel").click();
+      }
+    });
+
+    if (!serialSupported()) {
+      $("serialHint").textContent = "当前环境不可用 Web Serial（需 https 或 127.0.0.1）。";
+      setSerialStatus("不可用", "warn");
+    }
+
+    updateSizeStats();
+    enableActions(false);
+    loadDraft().then((restored) => {
+      if (restored) {
+        setStatus("已恢复草稿", "ok");
+        return;
+      }
+      applyTemplate("price_tag");
+    });
+
+    /* ==== nRF54 BLE bridge (pywebview) ==== */
+    function bleApi() {
+      try {
+        if (window.pywebview && window.pywebview.api) return window.pywebview.api;
+      } catch (_) {}
+      return null;
+    }
+
+    function setBleStatus(text, kind) {
+      const el = $("bleStatus");
+      if (!el) return;
+      el.textContent = text;
+      el.className = "ble-status" + (kind ? " " + kind : "");
+    }
+
+    function bytesToBase64(u8) {
+      let s = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < u8.length; i += chunk) {
+        s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+      }
+      return btoa(s);
+    }
+
+    /** Pack planes for GDEY029Z95 / nRF firmware: BW 1=white, RED 1=red, MSB-left. */
+    function exportPlanesForNrf() {
+      ensureBgCache(true);
+      const { width, height } = getSize();
+      const doc = composeDocument({ preview: false });
+      const { blackMask, redMask } = imageDataToMasks(doc);
+      const msbFirst = true;
+      // BW: black ink -> bit 0 (inkIs1=false). RED: red ink -> bit 1 (inkIs1=true).
+      const blackBytes = packPlane(blackMask, width, height, msbFirst, false);
+      const redBytes = packPlane(redMask, width, height, msbFirst, true);
+      return {
+        width,
+        height,
+        bw_b64: bytesToBase64(blackBytes),
+        red_b64: bytesToBase64(redBytes),
+        bw_len: blackBytes.length,
+        red_len: redBytes.length,
+      };
+    }
+
+    async function bleScan() {
+      const api = bleApi();
+      if (!api) { setBleStatus("no pywebview bridge", "err"); return; }
+      if (state.bleBusy) { setBleStatus("busy — wait", "err"); return; }
+      if (state.bleConnected) {
+        if (!confirm("Scan will disconnect current link (Windows BLE). Continue?")) return;
+        await bleDisconnect();
+      }
+      const filter = ($("bleFilter").value || "").trim();
+      setBleStatus("scanning…");
+      syncBleChrome();
+      try {
+        const r = await api.scan(filter);
+        if (!r || !r.ok) {
+          setBleStatus((r && r.error) || "scan failed", "err");
+          return;
+        }
+        setBleStatus(r.message || "scanning…");
+      } catch (e) {
+        setBleStatus(String(e), "err");
+      }
+    }
+
+    async function bleToggleLink() {
+      if (state.bleBusy) { setBleStatus("busy — wait", "err"); return; }
+      if (state.bleConnected) {
+        await bleDisconnect();
+      } else {
+        await bleConnect();
+      }
+    }
+
+    async function bleConnect() {
+      const api = bleApi();
+      if (!api) { setBleStatus("no pywebview bridge", "err"); return; }
+      if (state.bleBusy) { setBleStatus("busy — wait", "err"); return; }
+      if (state.bleConnected) { setBleStatus("already connected", "ok"); return; }
+      const addr = $("bleDevice").value;
+      if (!addr) { setBleStatus("pick device", "err"); return; }
+      const label = $("bleDevice").selectedOptions[0]?.textContent || "";
+      const name = (label.split("[")[0] || "").trim();
+      setBleStatus("connecting…");
+      state.bleBusy = true;
+      syncBleChrome();
+      try {
+        const r = await api.connect(addr, name);
+        if (!r || !r.ok) {
+          setBleStatus((r && r.error) || "connect failed", "err");
+          state.bleBusy = false;
+          syncBleChrome();
+          return;
+        }
+        setBleStatus(r.message || "connecting…");
+      } catch (e) {
+        setBleStatus(String(e), "err");
+        state.bleBusy = false;
+        syncBleChrome();
+      }
+    }
+
+    async function bleDisconnect() {
+      const api = bleApi();
+      if (!api) return;
+      if (state.bleBusy) { setBleStatus("busy — wait", "err"); return; }
+      try {
+        await api.disconnect();
+      } catch (_) {}
+      state.bleConnected = false;
+      syncBleChrome();
+      setBleStatus("disconnected");
+    }
+
+    function syncBleChrome() {
+      const link = $("btnBleLink");
+      const up = $("btnBleUpload");
+      const scan = $("btnBleScan");
+      if (!link) return;
+      link.textContent = state.bleConnected ? "Disconnect" : "Connect";
+      link.classList.toggle("primary", !state.bleConnected);
+      link.classList.toggle("danger", state.bleConnected);
+      const idle = !state.bleBusy;
+      link.disabled = !idle || (!state.bleConnected && !$("bleDevice").value);
+      // allow disconnect even if device list empty
+      if (state.bleConnected) link.disabled = !idle;
+      if (up) up.disabled = !(idle && state.bleConnected);
+      if (scan) scan.disabled = !idle;
+    }
+
+    async function bleUpload() {
+      const api = bleApi();
+      if (!api) { setBleStatus("no pywebview bridge", "err"); return; }
+      if (!state.bleConnected) { setBleStatus("connect first", "err"); return; }
+      if (state.bleBusy) { setBleStatus("busy — wait", "err"); return; }
+      let planes;
+      try {
+        planes = exportPlanesForNrf();
+      } catch (e) {
+        setBleStatus("export failed: " + e, "err");
+        return;
+      }
+      if (planes.width !== 128 || planes.height !== 296) {
+        setBleStatus(`upload needs 128×296 (now ${planes.width}×${planes.height})`, "err");
+        setStatus("固件目前仅支持 128×296（2.9″），请改尺寸后再上传", "err");
+        return;
+      }
+      setBleStatus("uploading…");
+      state.bleBusy = true;
+      syncBleChrome();
+      try {
+        const r = await api.upload(planes.width, planes.height, planes.bw_b64, planes.red_b64);
+        if (!r || !r.ok) {
+          setBleStatus((r && r.error) || "upload failed", "err");
+          state.bleBusy = false;
+          syncBleChrome();
+        } else {
+          setBleStatus(r.message || "upload started", "ok");
+          setStatus("BLE 上传中…", "ok");
+        }
+      } catch (e) {
+        setBleStatus(String(e), "err");
+        state.bleBusy = false;
+        syncBleChrome();
+      }
+    }
+
+    // Called from Python event pump
+    window.__nrfBleEvent = function (ev) {
+      if (!ev || !ev.kind) return;
+      if (ev.kind === "status") {
+        if (ev.message) setBleStatus(ev.message);
+      } else if (ev.kind === "log") {
+        if (ev.message && /upload|connected|GATT|EPD/i.test(ev.message)) {
+          setBleStatus(ev.message.slice(0, 80), "ok");
+        }
+      } else if (ev.kind === "error") {
+        setBleStatus(ev.message || "error", "err");
+        // Connect/scan failures also emit busy→idle, but clear early so UI unsticks.
+        state.bleBusy = false;
+        syncBleChrome();
+      } else if (ev.kind === "connected") {
+        state.bleConnected = !!ev.data;
+        if (!state.bleConnected) state.bleBusy = false;
+        syncBleChrome();
+        setBleStatus(state.bleConnected ? "connected" : "disconnected", state.bleConnected ? "ok" : undefined);
+      } else if (ev.kind === "busy") {
+        const op = (ev.data && ev.data.op) || "idle";
+        state.bleConnected = !!(ev.data && ev.data.connected);
+        state.bleBusy = op !== "idle";
+        syncBleChrome();
+        if (op === "uploading") setBleStatus("uploading…");
+        else if (op === "scanning") setBleStatus("scanning…");
+        else if (op === "connecting") setBleStatus("connecting…");
+        else if (state.bleConnected) setBleStatus("connected", "ok");
+      } else if (ev.kind === "devices" && Array.isArray(ev.data)) {
+        const sel = $("bleDevice");
+        sel.innerHTML = "";
+        if (!ev.data.length) {
+          sel.innerHTML = '<option value="">(no devices)</option>';
+        } else {
+          ev.data.forEach((d, i) => {
+            const opt = document.createElement("option");
+            opt.value = d.address;
+            opt.textContent = `${d.name || "?"}  [${d.address}]  (${d.rssi != null ? d.rssi + " dBm" : "?"})`;
+            if (i === 0) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          setBleStatus(`found ${ev.data.length}`, "ok");
+        }
+        syncBleChrome();
+      }
+    };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      // re-bind if DOM already ready below; also call at end of script
+    });
+
+    async function blePollOnce() {
+      const api = bleApi();
+      if (!api || typeof api.poll_events !== "function") return;
+      try {
+        const evs = await api.poll_events();
+        if (!Array.isArray(evs)) return;
+        for (const ev of evs) {
+          window.__nrfBleEvent(ev);
+        }
+      } catch (_) {}
+    }
+
+    function wireBleUi() {
+      const scan = $("btnBleScan");
+      if (!scan || scan.dataset.wired) return;
+      scan.dataset.wired = "1";
+      scan.addEventListener("click", () => { bleScan(); });
+      $("btnBleLink").addEventListener("click", () => { bleToggleLink(); });
+      $("btnBleUpload").addEventListener("click", () => { bleUpload(); });
+      $("bleDevice").addEventListener("change", () => { syncBleChrome(); });
+      syncBleChrome();
+      if (!state.blePollTimer) {
+        state.blePollTimer = setInterval(() => { blePollOnce(); }, 100);
+      }
+      if (bleApi()) setBleStatus("bridge ready", "ok");
+      else setBleStatus("open via python main.py", "err");
+    }
+
+    wireBleUi();
+    window.addEventListener("pywebviewready", () => {
+      setBleStatus("bridge ready", "ok");
+      wireBleUi();
+      blePollOnce();
+    });
+  </script>
+</body>
+</html>

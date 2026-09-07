@@ -2,14 +2,19 @@
  * eink_tag — BLE + EPD project logic (platform boot is in start/).
  *
  * BLE CMD：
- *   PING(1001)    → ACK，不刷屏
- *   DISPLAY(2001) → 投递 EPD 线程全刷 demo（异步）
- *   HEARTBEAT(8001) 上行约 20s
+ *   PING(1001)         → ACK，不刷屏
+ *   DISPLAY(2001)      → 投递 EPD 线程 demo 全刷（异步；上电不自动跑）
+ *   DISP_BEGIN(2002)   → 开会话，清平面，记 len/CRC
+ *   DISP_CHUNK(2003)   → 按 offset 写平面
+ *   DISP_REFRESH(2004) → CRC 校验后投递 host 全刷
+ *   HEARTBEAT(8001)    上行约 20s
  *
  * EPD 在独立线程；main 只跑 start_poll / BLE。
  */
 
 #include "start.h"
+
+#include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
@@ -17,6 +22,7 @@
 
 #include "ble.h"
 #include "ble_cmd.h"
+#include "crc32.h"
 #include "epd_board.h"
 #include "event.h"
 #include "log.h"
@@ -30,29 +36,260 @@
 
 #define APP_EPD_STACK_SIZE  4096
 #define APP_EPD_THREAD_PRIO 8
-#define APP_EPD_JOB_REFRESH 1U
+#define APP_EPD_JOB_DEMO    1U
+#define APP_EPD_JOB_HOST    2U
+
+typedef enum {
+	APP_DISP_IDLE = 0,
+	APP_DISP_RECEIVING,
+} app_disp_state_t;
+
+typedef struct {
+	app_disp_state_t state;
+	uint8_t planes;
+	uint16_t bw_len;
+	uint16_t red_len;
+	uint32_t bw_crc;
+	uint32_t red_crc;
+} app_disp_session_t;
 
 static K_THREAD_STACK_DEFINE(s_epd_stack, APP_EPD_STACK_SIZE);
 static struct k_thread s_epd_thread;
 K_MSGQ_DEFINE(s_epd_jobs, sizeof(uint8_t), 2, 1);
 static atomic_t s_epd_ready;
+static app_disp_session_t s_disp;
 
-static status_t app_epd_request_refresh(void)
+static status_t app_epd_queue_job(uint8_t job)
 {
-	uint8_t job = APP_EPD_JOB_REFRESH;
+	status_t st;
 
 	if (atomic_get(&s_epd_ready) == 0) {
 		LOG_WARN("app: EPD not ready yet");
 		return STATUS_INVALID_STATE;
 	}
 
+	st = epd_board_lock_planes();
+	if (st != STATUS_OK) {
+		LOG_WARN("app: EPD planes busy");
+		return st;
+	}
+
 	if (k_msgq_put(&s_epd_jobs, &job, K_NO_WAIT) != 0) {
-		LOG_WARN("app: EPD job queue full (refresh busy)");
+		epd_board_unlock_planes();
+		LOG_WARN("app: EPD job queue full");
 		return STATUS_FAIL;
 	}
 
-	LOG_INFO("app: EPD refresh queued");
 	return STATUS_OK;
+}
+
+static void app_disp_reset(void)
+{
+	memset(&s_disp, 0, sizeof(s_disp));
+	s_disp.state = APP_DISP_IDLE;
+}
+
+static status_t app_disp_handle_begin(const uint8_t *payload, uint16_t plen)
+{
+	uint16_t width;
+	uint16_t height;
+	uint8_t planes;
+	uint8_t flags;
+	uint16_t bw_len;
+	uint16_t red_len;
+	uint32_t bw_crc;
+	uint32_t red_crc;
+	uint32_t plane_sz;
+	status_t st;
+
+	if (plen != BLE_CMD_DISP_BEGIN_PAYLOAD_SIZE) {
+		LOG_WARN("app: BEGIN bad plen=%u (need %u)", (unsigned)plen,
+			 (unsigned)BLE_CMD_DISP_BEGIN_PAYLOAD_SIZE);
+		return STATUS_INVALID_ARG;
+	}
+	if (atomic_get(&s_epd_ready) == 0) {
+		LOG_WARN("app: BEGIN rejected — EPD not ready yet (wait for 'epd: ready')");
+		return STATUS_INVALID_STATE;
+	}
+	if (epd_board_is_busy()) {
+		LOG_WARN("app: BEGIN rejected — EPD busy (refresh in progress)");
+		return STATUS_INVALID_STATE;
+	}
+
+	width = sys_get_le16(&payload[0]);
+	height = sys_get_le16(&payload[2]);
+	planes = payload[4];
+	flags = payload[5];
+	bw_len = sys_get_le16(&payload[6]);
+	red_len = sys_get_le16(&payload[8]);
+	bw_crc = sys_get_le32(&payload[10]);
+	red_crc = sys_get_le32(&payload[14]);
+
+	plane_sz = epd_board_plane_size();
+
+	if ((width != epd_board_width()) || (height != epd_board_height())) {
+		LOG_WARN("app: BEGIN size mismatch %ux%u (board %ux%u)", width, height,
+			 epd_board_width(), epd_board_height());
+		return STATUS_INVALID_ARG;
+	}
+	if (flags != 0U) {
+		return STATUS_NOT_SUPPORTED;
+	}
+	if ((planes & (BLE_CMD_DISP_PLANES_BW | BLE_CMD_DISP_PLANES_RED)) == 0U) {
+		return STATUS_INVALID_ARG;
+	}
+	if ((planes & ~((uint8_t)(BLE_CMD_DISP_PLANES_BW | BLE_CMD_DISP_PLANES_RED))) != 0U) {
+		return STATUS_INVALID_ARG;
+	}
+
+	if ((planes & BLE_CMD_DISP_PLANES_BW) != 0U) {
+		if (bw_len != (uint16_t)plane_sz) {
+			return STATUS_INVALID_ARG;
+		}
+	} else if ((bw_len != 0U) || (bw_crc != 0U)) {
+		return STATUS_INVALID_ARG;
+	}
+
+	if ((planes & BLE_CMD_DISP_PLANES_RED) != 0U) {
+		if (red_len != (uint16_t)plane_sz) {
+			return STATUS_INVALID_ARG;
+		}
+	} else if ((red_len != 0U) || (red_crc != 0U)) {
+		return STATUS_INVALID_ARG;
+	}
+
+	st = epd_board_clear_planes(EPD_BOARD_PLANES_BW | EPD_BOARD_PLANES_RED);
+	if (st != STATUS_OK) {
+		return st;
+	}
+
+	s_disp.state = APP_DISP_RECEIVING;
+	s_disp.planes = planes;
+	s_disp.bw_len = bw_len;
+	s_disp.red_len = red_len;
+	s_disp.bw_crc = bw_crc;
+	s_disp.red_crc = red_crc;
+
+	LOG_INFO("app: BEGIN ok planes=0x%02x bw_len=%u red_len=%u", planes, bw_len, red_len);
+	return STATUS_OK;
+}
+
+static status_t app_disp_handle_chunk(const uint8_t *payload, uint16_t plen)
+{
+	uint8_t plane;
+	uint16_t offset;
+	uint16_t data_len;
+	uint8_t expect_bit;
+
+	if (s_disp.state != APP_DISP_RECEIVING) {
+		return STATUS_INVALID_STATE;
+	}
+	if (epd_board_is_busy()) {
+		return STATUS_INVALID_STATE;
+	}
+	if (plen < BLE_CMD_DISP_CHUNK_HDR_SIZE) {
+		return STATUS_INVALID_ARG;
+	}
+
+	plane = payload[0];
+	offset = sys_get_le16(&payload[1]);
+	data_len = sys_get_le16(&payload[3]);
+
+	if ((uint16_t)(BLE_CMD_DISP_CHUNK_HDR_SIZE + data_len) != plen) {
+		return STATUS_INVALID_ARG;
+	}
+	if (data_len == 0U) {
+		return STATUS_INVALID_ARG;
+	}
+	if (data_len > BLE_CMD_DISP_CHUNK_DATA_MAX) {
+		return STATUS_INVALID_ARG;
+	}
+
+	if (plane == BLE_CMD_DISP_PLANE_BW) {
+		expect_bit = BLE_CMD_DISP_PLANES_BW;
+	} else if (plane == BLE_CMD_DISP_PLANE_RED) {
+		expect_bit = BLE_CMD_DISP_PLANES_RED;
+	} else {
+		return STATUS_INVALID_ARG;
+	}
+
+	if ((s_disp.planes & expect_bit) == 0U) {
+		return STATUS_INVALID_ARG;
+	}
+
+	return epd_board_write_plane(plane, offset, &payload[BLE_CMD_DISP_CHUNK_HDR_SIZE], data_len);
+}
+
+static status_t app_disp_verify_crc(void)
+{
+	const uint8_t *data;
+	uint32_t got;
+
+	if ((s_disp.planes & BLE_CMD_DISP_PLANES_BW) != 0U) {
+		data = epd_board_plane_data(EPD_BOARD_PLANE_BW);
+		if (data == NULL) {
+			return STATUS_INVALID_STATE;
+		}
+		got = crc32_compute(data, s_disp.bw_len);
+		if (got != s_disp.bw_crc) {
+			LOG_WARN("app: BW CRC fail got=0x%08x expect=0x%08x", got, s_disp.bw_crc);
+			return STATUS_FAIL;
+		}
+	}
+
+	if ((s_disp.planes & BLE_CMD_DISP_PLANES_RED) != 0U) {
+		data = epd_board_plane_data(EPD_BOARD_PLANE_RED);
+		if (data == NULL) {
+			return STATUS_INVALID_STATE;
+		}
+		got = crc32_compute(data, s_disp.red_len);
+		if (got != s_disp.red_crc) {
+			LOG_WARN("app: RED CRC fail got=0x%08x expect=0x%08x", got, s_disp.red_crc);
+			return STATUS_FAIL;
+		}
+	}
+
+	return STATUS_OK;
+}
+
+static status_t app_disp_handle_refresh(uint16_t plen)
+{
+	status_t st;
+
+	if (plen != 0U) {
+		return STATUS_INVALID_ARG;
+	}
+	if (s_disp.state != APP_DISP_RECEIVING) {
+		return STATUS_INVALID_STATE;
+	}
+	if (epd_board_is_busy()) {
+		return STATUS_INVALID_STATE;
+	}
+
+	st = app_disp_verify_crc();
+	if (st != STATUS_OK) {
+		app_disp_reset();
+		return st;
+	}
+
+	/* 入队前已 lock，刷完由 worker 内 refresh 解锁 */
+	st = app_epd_queue_job(APP_EPD_JOB_HOST);
+	app_disp_reset();
+	if (st == STATUS_OK) {
+		LOG_INFO("app: REFRESH queued (host buffer)");
+	}
+	return st;
+}
+
+static void app_ack(uint16_t cmd_id, status_t st)
+{
+	status_t send_st = ble_cmd_send_ack(cmd_id, st);
+
+	if (send_st == STATUS_INVALID_STATE) {
+		LOG_INFO("app: ACK skipped (enable TX Notify)");
+	} else if (send_st != STATUS_OK) {
+		LOG_WARN("app: ACK send failed %d", (int)send_st);
+	}
 }
 
 static void app_handle_ble_cmds(void)
@@ -67,29 +304,33 @@ static void app_handle_ble_cmds(void)
 		switch (msg.cmd_id) {
 		case BLE_CMD_PING:
 			LOG_INFO("app: PING ok (link only, no EPD)");
-			st = ble_cmd_send_ack(BLE_CMD_PING, STATUS_OK);
-			if (st == STATUS_INVALID_STATE) {
-				LOG_INFO("app: ACK skipped (enable TX Notify)");
-			} else if (st != STATUS_OK) {
-				LOG_WARN("app: ACK send failed %d", (int)st);
-			} else {
-				LOG_INFO("app: ACK sent for PING");
-			}
+			app_ack(BLE_CMD_PING, STATUS_OK);
 			break;
 
 		case BLE_CMD_DISPLAY:
-			/* payload 暂忽略：触发一次 demo 全刷（后续再接图像数据） */
-			LOG_INFO("app: DISPLAY → queue EPD refresh (payload ignored for now)");
-			st = app_epd_request_refresh();
-			(void)ble_cmd_send_ack(BLE_CMD_DISPLAY, st);
-			if (st == STATUS_OK) {
-				LOG_INFO("app: ACK sent for DISPLAY (refresh async)");
-			}
+			LOG_INFO("app: DISPLAY → queue demo refresh");
+			st = app_epd_queue_job(APP_EPD_JOB_DEMO);
+			app_ack(BLE_CMD_DISPLAY, st);
+			break;
+
+		case BLE_CMD_DISP_BEGIN:
+			st = app_disp_handle_begin(msg.payload, msg.payload_len);
+			app_ack(BLE_CMD_DISP_BEGIN, st);
+			break;
+
+		case BLE_CMD_DISP_CHUNK:
+			st = app_disp_handle_chunk(msg.payload, msg.payload_len);
+			app_ack(BLE_CMD_DISP_CHUNK, st);
+			break;
+
+		case BLE_CMD_DISP_REFRESH:
+			st = app_disp_handle_refresh(msg.payload_len);
+			app_ack(BLE_CMD_DISP_REFRESH, st);
 			break;
 
 		default:
 			LOG_WARN("app: unknown cmd_id=%u", (unsigned int)msg.cmd_id);
-			(void)ble_cmd_send_ack(msg.cmd_id, STATUS_NOT_SUPPORTED);
+			app_ack(msg.cmd_id, STATUS_NOT_SUPPORTED);
 			break;
 		}
 	}
@@ -156,32 +397,33 @@ static void app_epd_worker(void *p1, void *p2, void *p3)
 		return;
 	}
 
-	st = epd_board_test_run();
-	if (st != STATUS_OK) {
-		LOG_ERROR("epd: boot demo failed: %d", (int)st);
-		return;
-	}
-
+	/* 上电不跑 demo；DISPLAY(2001) / Host BEGIN→REFRESH 再刷 */
 	atomic_set(&s_epd_ready, 1);
-	LOG_INFO("epd: ready — waiting for DISPLAY(2001) refresh jobs");
+	LOG_INFO("epd: ready board=%ux%u plane=%u — DISPLAY=demo | BEGIN/CHUNK/REFRESH",
+		 (unsigned)epd_board_width(), (unsigned)epd_board_height(),
+		 (unsigned)epd_board_plane_size());
 
 	for (;;) {
 		if (k_msgq_get(&s_epd_jobs, &job, K_FOREVER) != 0) {
 			continue;
 		}
 
-		if (job != APP_EPD_JOB_REFRESH) {
+		refresh_n++;
+		if (job == APP_EPD_JOB_DEMO) {
+			LOG_INFO("epd: job #%u DEMO start", (unsigned int)refresh_n);
+			st = epd_board_test_run();
+		} else if (job == APP_EPD_JOB_HOST) {
+			LOG_INFO("epd: job #%u HOST refresh start", (unsigned int)refresh_n);
+			st = epd_board_refresh();
+		} else {
 			LOG_WARN("epd: unknown job %u", (unsigned int)job);
 			continue;
 		}
 
-		refresh_n++;
-		LOG_INFO("epd: refresh #%u start (from BLE DISPLAY)", (unsigned int)refresh_n);
-		st = epd_board_test_run();
 		if (st != STATUS_OK) {
-			LOG_ERROR("epd: refresh #%u failed: %d", (unsigned int)refresh_n, (int)st);
+			LOG_ERROR("epd: job #%u failed: %d", (unsigned int)refresh_n, (int)st);
 		} else {
-			LOG_INFO("epd: refresh #%u done", (unsigned int)refresh_n);
+			LOG_INFO("epd: job #%u done", (unsigned int)refresh_n);
 		}
 	}
 }
@@ -191,6 +433,7 @@ static status_t app_epd_start_async(void)
 	k_tid_t tid;
 
 	atomic_set(&s_epd_ready, 0);
+	app_disp_reset();
 
 	tid = k_thread_create(&s_epd_thread, s_epd_stack, K_THREAD_STACK_SIZEOF(s_epd_stack),
 			      app_epd_worker, NULL, NULL, NULL, K_PRIO_PREEMPT(APP_EPD_THREAD_PRIO),
@@ -231,7 +474,7 @@ void app_run(void)
 {
 	uint32_t tick = 0U;
 
-	LOG_INFO("eink_tag run: PING=link | DISPLAY=EPD refresh | HB=%us",
+	LOG_INFO("eink_tag run: PING | DISPLAY=demo | BEGIN/CHUNK/REFRESH | HB=%us",
 		 (unsigned int)(APP_HB_PERIOD_MS / 1000U));
 
 	app_ble_cmd_smoke_inject();
@@ -244,9 +487,10 @@ void app_run(void)
 		}
 
 		if ((tick % APP_HB_PERIOD_TICKS) == 0U) {
-			LOG_INFO("status tick=%u adv=%d conn=%d epd_ready=%d",
+			LOG_INFO("status tick=%u adv=%d conn=%d epd_ready=%d epd_busy=%d",
 				 tick / APP_HB_PERIOD_TICKS, ble_is_advertising() ? 1 : 0,
-				 ble_is_connected() ? 1 : 0, (int)atomic_get(&s_epd_ready));
+				 ble_is_connected() ? 1 : 0, (int)atomic_get(&s_epd_ready),
+				 epd_board_is_busy() ? 1 : 0);
 			app_ble_heartbeat_try(tick / APP_HB_PERIOD_TICKS);
 		}
 		tick++;

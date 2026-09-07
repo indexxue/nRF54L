@@ -46,9 +46,14 @@ Host 须对 TX **Enable Notify**，否则上发返回 `STATUS_INVALID_STATE`。
 | ID | 宏 | 方向 | payload |
 |----|-----|------|---------|
 | 1001 | `BLE_CMD_PING` | 下行测试 | 可空 |
-| 2001 | `BLE_CMD_DISPLAY` | 下行 | 刷屏数据 |
+| 2001 | `BLE_CMD_DISPLAY` | 下行 | 本地 demo 全刷（可空） |
+| 2002 | `BLE_CMD_DISP_BEGIN` | 下行 | 18 B：分辨率 / planes / len / CRC |
+| 2003 | `BLE_CMD_DISP_CHUNK` | 下行 | plane + offset + data |
+| 2004 | `BLE_CMD_DISP_REFRESH` | 下行 | 空；CRC 后异步全刷 |
 | 7001 | `BLE_CMD_ACK` | 上行 | `req_cmd_id u16` + `status i32` |
 | 8001 | `BLE_CMD_HEARTBEAT` | 上行 | `tick u32` + `flags u8`（bit0=adv bit1=conn） |
+
+帧缓冲上传细节见 **[docs/display_plane_upload.md](docs/display_plane_upload.md)**。
 
 API：`ble_cmd_send` / `ble_cmd_send_ack` / `ble_cmd_send_heartbeat`。
 
