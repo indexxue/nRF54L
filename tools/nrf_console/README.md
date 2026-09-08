@@ -19,6 +19,15 @@ python main.py
 - 默认：HTML DIY 设计器（pywebview）
 - 旧版 Tk 控制台：`python main.py --classic`
 
+## 发布版（exe）
+
+```powershell
+cd tools\nrf_console
+.\release\build.cmd
+```
+
+产物在 `release\dist\nrf_console\`（整夹分发）。说明见 [`release/README.md`](release/README.md)。
+
 ## DIY 设计器用法
 
 1. 顶栏 **BLE**：Scan → 选 `eink_tag` → Connect  

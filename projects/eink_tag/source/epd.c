@@ -22,10 +22,14 @@
 #include "epd_display.h"
 #include "epd_panel.h"
 #include "log.h"
+#include "nvs.h"
 
 #define ZUSER DT_PATH(zephyr_user)
 
-#define EPD_PLANE_SIZE 4736U /* 128×296 / 8 */
+/** 缓冲按最大面板（4.2" 400×300 / 8 = 15000）分配；实际平面长取 active panel */
+#define EPD_PLANE_CAPACITY 15000U
+#define EPD_PLANE_2IN9     4736U  /* 128×296 / 8 */
+#define EPD_PLANE_4IN2     15000U /* 400×300 / 8 */
 #define EPD_BUSY_PROBE_MS 2000U
 /** BUSY 不可用时每帧后再等（单帧 demo 给足波形时间） */
 #define EPD_FRAME_SETTLE_MS 10000U
@@ -48,13 +52,24 @@ static const board_spi_bus_spec_t *s_bus;
 static struct spi_config s_spi_cfg;
 static bool s_bitbang;
 
-static uint8_t s_bw[EPD_PLANE_SIZE];
-static uint8_t s_red[EPD_PLANE_SIZE];
+static uint8_t s_bw[EPD_PLANE_CAPACITY];
+static uint8_t s_red[EPD_PLANE_CAPACITY];
 static epd_display_t s_disp;
+static const epd_panel_info_t *s_panel;
+static uint8_t s_size = EPD_BOARD_SIZE_2IN9;
+static uint32_t s_plane_size = EPD_PLANE_2IN9;
 static bool s_ready;
 static bool s_busy_usable = true;
 static uint32_t s_spi_err_count;
 static atomic_t s_refreshing;
+
+static const epd_panel_info_t *epd_board_pick_panel(uint8_t size)
+{
+	if (size == EPD_BOARD_SIZE_4IN2) {
+		return &epd_panel_ws_4in2b_v2;
+	}
+	return &epd_panel_gdey029z95;
+}
 
 static status_t epd_board_guard_writable(void)
 {
@@ -346,9 +361,23 @@ status_t epd_board_init(void)
 	epd_display_config_t cfg;
 	epd_display_status_t st;
 	uint32_t bitrate;
+	uint32_t plane;
 
 	s_ready = false;
 	s_spi_err_count = 0U;
+
+	s_size = nvs_epd_panel_get();
+	if ((s_size != EPD_BOARD_SIZE_2IN9) && (s_size != EPD_BOARD_SIZE_4IN2)) {
+		s_size = EPD_BOARD_SIZE_2IN9;
+	}
+	s_panel = epd_board_pick_panel(s_size);
+	plane = epd_panel_plane_size(s_panel);
+	if ((plane == 0U) || (plane > EPD_PLANE_CAPACITY)) {
+		LOG_ERROR("epd: bad plane size %u for %s", (unsigned)plane,
+			  (s_panel != NULL) ? s_panel->name : "?");
+		return STATUS_FAIL;
+	}
+	s_plane_size = plane;
 
 	if (epd_bind_bus() != STATUS_OK) {
 		return STATUS_FAIL;
@@ -389,10 +418,10 @@ status_t epd_board_init(void)
 	cfg.epd.busy_active_high = true;
 	/* 全黑常见于 invert 与模组不符；本板实测先关 */
 	cfg.epd.bw_invert = false;
-	cfg.epd.panel = &epd_panel_gdey029z95;
+	cfg.epd.panel = s_panel;
 	cfg.bw = s_bw;
 	cfg.red = s_red;
-	cfg.plane_capacity = EPD_PLANE_SIZE;
+	cfg.plane_capacity = EPD_PLANE_CAPACITY;
 	cfg.hw_clear_on_init = false;
 
 	st = epd_display_init(&s_disp, &cfg);
@@ -403,10 +432,12 @@ status_t epd_board_init(void)
 	}
 
 	s_ready = true;
-	LOG_INFO("epd: ready panel=%s %ux%u path=%s bw_invert=0 busy_ok=%d settle=%ums",
-		 epd_panel_gdey029z95.name, (unsigned int)epd_display_width(&s_disp),
-		 (unsigned int)epd_display_height(&s_disp), s_bitbang ? "bitbang" : "spim00",
-		 s_busy_usable ? 1 : 0, (unsigned int)(s_busy_usable ? 0U : EPD_FRAME_SETTLE_MS));
+	LOG_INFO("epd: ready panel=%s size=%s %ux%u plane=%u path=%s bw_invert=0 busy_ok=%d settle=%ums",
+		 s_panel->name, (s_size == EPD_BOARD_SIZE_4IN2) ? "4.2in" : "2.9in",
+		 (unsigned int)epd_display_width(&s_disp),
+		 (unsigned int)epd_display_height(&s_disp), (unsigned int)s_plane_size,
+		 s_bitbang ? "bitbang" : "spim00", s_busy_usable ? 1 : 0,
+		 (unsigned int)(s_busy_usable ? 0U : EPD_FRAME_SETTLE_MS));
 	return STATUS_OK;
 }
 
@@ -473,7 +504,9 @@ status_t epd_board_test_run(void)
 	/* 顶栏黑底白字 */
 	epd_display_fill_rect(&s_disp, 0U, 0U, x_max, (uint16_t)(title_h - 1U), EPD_COLOR_BLACK);
 	epd_display_draw_string(&s_disp, 4U, 6U, "eink_tag", EPD_FONT_16, EPD_COLOR_WHITE);
-	epd_display_draw_string(&s_disp, 4U, 24U, "2.9in BWR demo", EPD_FONT_12, EPD_COLOR_WHITE);
+	epd_display_draw_string(&s_disp, 4U, 24U,
+				(s_size == EPD_BOARD_SIZE_4IN2) ? "4.2in BWR demo" : "2.9in BWR demo",
+				EPD_FONT_12, EPD_COLOR_WHITE);
 
 	epd_display_draw_string(&s_disp, 4U, 48U, "Hello nRF54L15!", EPD_FONT_16, EPD_COLOR_BLACK);
 
@@ -500,8 +533,9 @@ status_t epd_board_test_run(void)
 
 	epd_display_draw_string(&s_disp, 4U, (uint16_t)(band_y1 + 8U), "BLACK / RED / WHITE",
 				EPD_FONT_12, EPD_COLOR_BLACK);
-	epd_display_draw_string(&s_disp, 4U, (uint16_t)(band_y1 + 24U), "GDEY029Z95 OK",
-				EPD_FONT_12, EPD_COLOR_RED);
+	epd_display_draw_string(&s_disp, 4U, (uint16_t)(band_y1 + 24U),
+				(s_panel != NULL) ? s_panel->name : "EPD", EPD_FONT_12,
+				EPD_COLOR_RED);
 	epd_display_draw_rect(&s_disp, 0U, 0U, x_max, y_max, EPD_COLOR_BLACK);
 
 	st = epd_refresh_step("demo", epd_display_refresh, EPD_COLOR_WHITE);
@@ -561,6 +595,16 @@ bool epd_board_is_busy(void)
 	return atomic_get(&s_refreshing) != 0;
 }
 
+uint8_t epd_board_size(void)
+{
+	return s_size;
+}
+
+const char *epd_board_panel_name(void)
+{
+	return (s_panel != NULL) ? s_panel->name : "?";
+}
+
 uint16_t epd_board_width(void)
 {
 	return s_ready ? epd_display_width(&s_disp) : 0U;
@@ -573,7 +617,7 @@ uint16_t epd_board_height(void)
 
 uint32_t epd_board_plane_size(void)
 {
-	return EPD_PLANE_SIZE;
+	return s_plane_size;
 }
 
 status_t epd_board_clear_planes(uint8_t planes_mask)
@@ -588,10 +632,10 @@ status_t epd_board_clear_planes(uint8_t planes_mask)
 	}
 
 	if ((planes_mask & EPD_BOARD_PLANES_BW) != 0U) {
-		memset(s_bw, 0xFF, sizeof(s_bw)); /* 1 = white */
+		memset(s_bw, 0xFF, s_plane_size); /* 1 = white */
 	}
 	if ((planes_mask & EPD_BOARD_PLANES_RED) != 0U) {
-		memset(s_red, 0x00, sizeof(s_red));
+		memset(s_red, 0x00, s_plane_size);
 	}
 	return STATUS_OK;
 }
@@ -607,7 +651,7 @@ status_t epd_board_write_plane(uint8_t plane, uint16_t offset, const uint8_t *da
 	if ((data == NULL) || (len == 0U)) {
 		return STATUS_INVALID_ARG;
 	}
-	if (((uint32_t)offset + (uint32_t)len) > EPD_PLANE_SIZE) {
+	if (((uint32_t)offset + (uint32_t)len) > s_plane_size) {
 		return STATUS_INVALID_ARG;
 	}
 

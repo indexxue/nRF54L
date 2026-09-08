@@ -52,15 +52,15 @@ static const led_scene_t led_scene_bootup = {
         .sub.onoff.value.r = 0xFF,
         .sub.onoff.value.g = 0,
         .sub.onoff.value.b = 0,
-        .sub.onoff.lifetime = 500 * LED_SCENE_MSEC,
+        .sub.onoff.lifetime = 400 * LED_SCENE_MSEC,
     },
     .action[1] = {
         .cycle = 1,
         .type = ACTION_ONOFF,
         .sub.onoff.value.r = 0,
         .sub.onoff.value.g = 0,
-        .sub.onoff.value.b = 0,
-        .sub.onoff.lifetime = 500 * LED_SCENE_MSEC,
+        .sub.onoff.value.b = 0xFF,
+        .sub.onoff.lifetime = 400 * LED_SCENE_MSEC,
     },
 };
 
@@ -169,6 +169,34 @@ static const led_scene_t led_scene_factory_run = {
     },
 };
 
+/** 2.9"：绿灯常亮（R→LED_G） */
+static const led_scene_t led_scene_epd_2in9 = {
+    .cycle = CYCLE_ALWAYS,
+    .num = 1,
+    .action[0] = {
+        .cycle = 1,
+        .type = ACTION_ONOFF,
+        .sub.onoff.value.r = 0xFF,
+        .sub.onoff.value.g = 0,
+        .sub.onoff.value.b = 0,
+        .sub.onoff.lifetime = 60000 * LED_SCENE_MSEC,
+    },
+};
+
+/** 4.2"：蓝灯常亮（B→LED_B） */
+static const led_scene_t led_scene_epd_4in2 = {
+    .cycle = CYCLE_ALWAYS,
+    .num = 1,
+    .action[0] = {
+        .cycle = 1,
+        .type = ACTION_ONOFF,
+        .sub.onoff.value.r = 0,
+        .sub.onoff.value.g = 0,
+        .sub.onoff.value.b = 0xFF,
+        .sub.onoff.lifetime = 60000 * LED_SCENE_MSEC,
+    },
+};
+
 static const led_scene_tab_t scene_table[LED_SCENE_ID_MAX_NUM] = {
     [LED_SCENE_ID_BOOTUP] = {.prio = LED_SCENE_PRIO_LOW, .scene = &led_scene_bootup},
     [LED_SCENE_ID_PAIRING] = {.prio = LED_SCENE_PRIO_PAIR, .scene = &led_scene_pairing},
@@ -176,6 +204,8 @@ static const led_scene_tab_t scene_table[LED_SCENE_ID_MAX_NUM] = {
     [LED_SCENE_ID_ERROR] = {.prio = LED_SCENE_PRIO_NORMAL, .scene = &led_scene_error},
     [LED_SCENE_ID_SUCCESS] = {.prio = LED_SCENE_PRIO_NORMAL, .scene = &led_scene_success},
     [LED_SCENE_ID_FACTORY_RUN] = {.prio = LED_SCENE_PRIO_LOW, .scene = &led_scene_factory_run},
+    [LED_SCENE_ID_EPD_2IN9] = {.prio = LED_SCENE_PRIO_LOW, .scene = &led_scene_epd_2in9},
+    [LED_SCENE_ID_EPD_4IN2] = {.prio = LED_SCENE_PRIO_LOW, .scene = &led_scene_epd_4in2},
 };
 
 static void led_drv_onoff(led_idx_e idx, bool onoff)

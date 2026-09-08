@@ -1,9 +1,9 @@
 # eink_tag
 
 通过 **片上 NFC（NFCT）或 BLE** 刷墨水屏标签（后续）。  
-**当前冒烟**：HFXO + UART + LED + 按键 + **BLE 广播/CMD** + **2.9" BWR EPD**。NFC 暂关。
+**当前冒烟**：HFXO + UART + LED + 按键 + **BLE 广播/CMD** + **2.9"/4.2" BWR EPD**。NFC 暂关。
 
-平台起机：[`start/`](../../start/)（`CONFIG_START_REQUEST_HFXO=y`）。本工程 `src/app.c` 只做 BLE + EPD。
+平台起机：[`start/`](../../start/)（`CONFIG_START_REQUEST_HFXO=y`）。本工程根目录 `app.c` 只做 BLE + EPD。
 
 ## 当前接线
 
@@ -19,6 +19,15 @@
 | LFCLK | 内部 RC |
 
 `board` mask：`UART | LED | BUTTON | SPI | BLE`
+
+## 面板尺寸切换（BTN1 / CONFIRM）
+
+| 操作 | 效果 | 灯效 |
+|------|------|------|
+| 上电～EPD ready | 初始化中 | **绿/蓝交替闪** |
+| EPD ready 后 | 当前驱动指示 | **2.9" 绿灯常亮** / **4.2" 蓝灯常亮** |
+| **双击** BTN1 | 切 **4.2"**，写 NVS，冷重启 | 先蓝常亮再重启 |
+| **长按 10s** BTN1 | 切回 **2.9"**，写 NVS，冷重启 | 先绿常亮再重启 |
 
 BLE 协议在仓库 [`ble/`](../../ble/)（`modules/nrf54_ble`）。  
 - 上电：EPD **只 init，不跑 demo**（屏保持上一次画面）  

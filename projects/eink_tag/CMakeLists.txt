@@ -16,17 +16,18 @@ project(eink_tag)
 set(CBB_EPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/epd)
 
 target_sources(app PRIVATE
-  src/app.c
+  app.c
   board/board_config.c
   source/epd.c
   ${CBB_EPD_DIR}/epd.c
   ${CBB_EPD_DIR}/epd_display.c
   ${CBB_EPD_DIR}/epd_display_assets.c
   ${CBB_EPD_DIR}/panels/epd_panel_gdey029z95.c
+  ${CBB_EPD_DIR}/panels/epd_panel_ws_4in2b_v2.c
 )
 
 target_include_directories(app PRIVATE
   ${CBB_EPD_DIR}
-  src
+  ${CMAKE_CURRENT_SOURCE_DIR}
   source
 )

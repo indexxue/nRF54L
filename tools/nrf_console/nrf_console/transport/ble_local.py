@@ -16,6 +16,10 @@ from .base import DeviceInfo, DisconnectHandler, NotifyHandler, Transport, Trans
 _DEFAULT_WOR = 20
 _CONNECT_ATTEMPTS = 3
 _CONNECT_TIMEOUT_S = 20.0
+_SCAN_ATTEMPTS = 3
+_SCAN_SETTLE_AFTER_DISC_S = 0.7
+_SCAN_RETRY_PAUSE_S = 0.6
+_SCAN_STOP_SETTLE_S = 0.25
 
 
 class BleLocalTransport(Transport):
@@ -35,61 +39,129 @@ class BleLocalTransport(Transport):
 
     async def scan(
         self,
-        timeout_s: float = 5.0,
+        timeout_s: float = 8.0,
         name_filter: str = "",
     ) -> list[DeviceInfo]:
         """Scan for peripherals.
 
         Windows adapters often fail or return empty while a GATT connection is
         open, and long-lived watcher state can go stale. Always drop any link
-        first, then run a fresh scanner with one retry on empty/error.
+        first, then run several fresh active scans and merge hits.
         """
         async with self._radio_lock:
             if self._client is not None:
-                await self._dispose_client(settle_s=0.4)
+                await self._dispose_client(settle_s=_SCAN_SETTLE_AFTER_DISC_S)
+            else:
+                # Radio may still be settling after a prior scan/connect.
+                await asyncio.sleep(0.2)
 
+            merged: dict[str, DeviceInfo] = {}
+            merged_dev: dict[str, BLEDevice] = {}
             last_exc: Exception | None = None
-            for attempt in range(2):
+            # Cap single-pass time; multi-attempt covers flaky empty windows.
+            pass_timeout = max(3.0, float(timeout_s))
+
+            for attempt in range(_SCAN_ATTEMPTS):
                 try:
-                    devices = await self._scan_once(timeout_s, name_filter)
+                    batch, batch_dev = await self._scan_once(pass_timeout)
                 except Exception as exc:  # noqa: BLE001
                     last_exc = exc
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(_SCAN_RETRY_PAUSE_S * (attempt + 1))
                     continue
-                if devices or attempt == 1:
-                    return devices
-                # Empty first pass: recreate watcher after a short pause.
-                await asyncio.sleep(0.5)
 
-            if last_exc is not None:
+                for addr, info in batch.items():
+                    prev = merged.get(addr)
+                    if prev is None:
+                        merged[addr] = info
+                        merged_dev[addr] = batch_dev[addr]
+                        continue
+                    name = info.name
+                    if name in ("", "(no name)") and prev.name not in ("", "(no name)"):
+                        name = prev.name
+                    rssi = info.rssi
+                    if rssi is None or (prev.rssi is not None and prev.rssi > rssi):
+                        rssi = prev.rssi
+                    merged[addr] = DeviceInfo(address=addr, name=name, rssi=rssi)
+                    # Prefer BLEDevice from a packet that carried a real name.
+                    if info.name not in ("", "(no name)") or addr not in merged_dev:
+                        merged_dev[addr] = batch_dev[addr]
+
+                hits = self._apply_name_filter(list(merged.values()), name_filter)
+                if hits:
+                    break
+                if attempt + 1 < _SCAN_ATTEMPTS:
+                    await asyncio.sleep(_SCAN_RETRY_PAUSE_S * (attempt + 1))
+
+            self._ble_devices.update(merged_dev)
+            devices = self._apply_name_filter(list(merged.values()), name_filter)
+            if devices:
+                return self._sort_devices(devices)
+            if last_exc is not None and not merged:
                 raise TransportError(f"scan failed: {last_exc}") from last_exc
             return []
+
+    @staticmethod
+    def _apply_name_filter(devices: list[DeviceInfo], name_filter: str) -> list[DeviceInfo]:
+        filt = (name_filter or "").strip().lower()
+        if not filt:
+            return devices
+        return [d for d in devices if filt in (d.name or "").lower()]
+
+    @staticmethod
+    def _sort_devices(devices: list[DeviceInfo]) -> list[DeviceInfo]:
+        return sorted(
+            devices,
+            key=lambda d: (d.rssi is None, -(d.rssi or 0), d.name.lower()),
+        )
 
     async def _scan_once(
         self,
         timeout_s: float,
-        name_filter: str,
-    ) -> list[DeviceInfo]:
+    ) -> tuple[dict[str, DeviceInfo], dict[str, BLEDevice]]:
+        """One watcher pass; collect all ads (name filter applied after merge)."""
         found: dict[str, DeviceInfo] = {}
         found_dev: dict[str, BLEDevice] = {}
         scanner: BleakScanner | None = None
 
         def _cb(device: BLEDevice, adv: AdvertisementData) -> None:
-            name = device.name or adv.local_name or ""
-            if name_filter and name_filter.lower() not in name.lower():
-                return
+            name = (device.name or adv.local_name or "").strip()
             rssi = adv.rssi
             prev = found.get(device.address)
-            if prev is None or (rssi is not None and (prev.rssi is None or rssi > prev.rssi)):
+            if prev is None:
                 found[device.address] = DeviceInfo(
                     address=device.address,
                     name=name or "(no name)",
                     rssi=rssi,
                 )
                 found_dev[device.address] = device
+                return
+            # Later packets often carry Complete Local Name in scan response.
+            use_name = name if name else (
+                prev.name if prev.name != "(no name)" else "(no name)"
+            )
+            use_rssi = rssi
+            if use_rssi is None or (prev.rssi is not None and prev.rssi > use_rssi):
+                use_rssi = prev.rssi
+            if name and prev.name in ("", "(no name)"):
+                found[device.address] = DeviceInfo(
+                    address=device.address, name=use_name, rssi=use_rssi
+                )
+                found_dev[device.address] = device
+            elif use_rssi != prev.rssi:
+                found[device.address] = DeviceInfo(
+                    address=device.address, name=prev.name, rssi=use_rssi
+                )
+                found_dev[device.address] = device
 
         try:
-            scanner = BleakScanner(detection_callback=_cb)
+            # Active scan: request scan response (name often only there).
+            kwargs: dict = {"detection_callback": _cb}
+            if sys.platform == "win32":
+                kwargs["scanning_mode"] = "active"
+            try:
+                scanner = BleakScanner(**kwargs)
+            except TypeError:
+                scanner = BleakScanner(detection_callback=_cb)
             await scanner.start()
             await asyncio.sleep(timeout_s)
         finally:
@@ -98,14 +170,9 @@ class BleLocalTransport(Transport):
                     await scanner.stop()
                 except Exception:  # noqa: BLE001
                     pass
-            # Brief settle so the next start()/connect() is not racing WinRT.
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(_SCAN_STOP_SETTLE_S)
 
-        self._ble_devices.update(found_dev)
-        return sorted(
-            found.values(),
-            key=lambda d: (d.rssi is None, -(d.rssi or 0), d.name.lower()),
-        )
+        return found, found_dev
 
     async def connect(
         self,

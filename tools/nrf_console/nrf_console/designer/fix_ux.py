@@ -460,11 +460,6 @@ def patch_html() -> None:
         setBleStatus("export failed: " + e, "err");
         return;
       }
-      if (planes.width !== 128 || planes.height !== 296) {
-        setBleStatus(`upload needs 128×296 (now ${planes.width}×${planes.height})`, "err");
-        setStatus("固件目前仅支持 128×296（2.9″），请改尺寸后再上传", "err");
-        return;
-      }
       setBleStatus("uploading…");
       state.bleBusy = true;
       syncBleChrome();

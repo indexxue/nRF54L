@@ -132,7 +132,14 @@ class BleController:
         if not self._try_begin_op("scanning"):
             return
         was_connected = self._connected
+        filt = (self.cfg.device_name_filter or "").strip()
+        filt_disp = repr(filt) if filt else "(none)"
         self._emit("status", "scanning…")
+        self._emit(
+            "log",
+            f"scan: timeout={self.cfg.scan_timeout_s:.0f}s×3 "
+            f"filter={filt_disp} (active scan on Windows)",
+        )
         if was_connected:
             self._emit("log", "scan: disconnecting current link first (Windows radio)")
             self._fail_ack_waiters(RuntimeError("disconnected for scan"))
@@ -150,7 +157,20 @@ class BleController:
             return
         self._devices = devices
         self._emit("devices", data=devices)
-        self._emit("log", f"scan done: {len(devices)} device(s)")
+        if devices:
+            self._emit(
+                "log",
+                "scan done: "
+                + ", ".join(
+                    f"{d.name}[{d.address}] rssi={d.rssi}" for d in devices[:8]
+                )
+                + (f" …(+{len(devices) - 8})" if len(devices) > 8 else ""),
+            )
+        else:
+            tip = (
+                " — wait 2–3s after device boot; clear filter; ensure not connected elsewhere"
+            )
+            self._emit("log", f"scan done: 0 device(s){tip}")
         self._emit("status", "idle")
         self._set_op("idle")
 
@@ -291,8 +311,16 @@ class BleController:
     def upload_page(self, page_key: str) -> None:
         self._submit(self._upload_page(page_key))
 
-    def upload_planes(self, bw: bytes, red: bytes | None, *, label: str = "custom") -> None:
-        self._submit(self._upload_planes(bw, red, label=label))
+    def upload_planes(
+        self,
+        bw: bytes,
+        red: bytes | None,
+        *,
+        label: str = "custom",
+        width: int | None = None,
+        height: int | None = None,
+    ) -> None:
+        self._submit(self._upload_planes(bw, red, label=label, width=width, height=height))
 
     async def _upload_page(self, page_key: str) -> None:
         try:
@@ -308,6 +336,8 @@ class BleController:
         red: bytes | None,
         *,
         label: str = "custom",
+        width: int | None = None,
+        height: int | None = None,
     ) -> None:
         if self._transport is None or not self._transport.is_connected() or not self._connected:
             self._emit("error", "not connected")
@@ -326,11 +356,16 @@ class BleController:
                     "Rebuild firmware with larger BT_L2CAP_TX_MTU and reflash."
                 )
             chunk_data_max = min(235, max(1, payload_cap - 5))
-            steps = list(iter_upload_steps(bw, red, chunk_data_max=chunk_data_max))
+            steps = list(
+                iter_upload_steps(
+                    bw, red, width=width, height=height, chunk_data_max=chunk_data_max
+                )
+            )
             total = len(steps)
+            geom = f"{width}x{height}" if width and height else f"plane={len(bw)}"
             self._emit(
                 "log",
-                f"EPD upload [{label}]: {total} frames "
+                f"EPD upload [{label}] {geom}: {total} frames "
                 f"(BEGIN + {total - 2} CHUNK + REFRESH), "
                 f"chunk_data≤{chunk_data_max}, wor≤{max_frame}",
             )

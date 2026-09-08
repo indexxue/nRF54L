@@ -13,12 +13,13 @@ from .pages import (
     make_tag_demo,
     make_test_pattern,
 )
-from .plane import PLANE_SIZE, Color
+from .plane import PANEL_PROFILES, PLANE_SIZE, Color, geometry_for, panel_by_size, require_panel
 from .session import iter_upload_steps, pack_begin
 
 __all__ = [
     "FIELD_LAYOUTS",
     "FIXED_LAYOUTS",
+    "PANEL_PROFILES",
     "PLANE_SIZE",
     "PAGE_CATALOG",
     "Canvas",
@@ -26,6 +27,7 @@ __all__ = [
     "FontSize",
     "build_page",
     "build_tag",
+    "geometry_for",
     "image_to_planes",
     "iter_upload_steps",
     "make_gfx_demo",
@@ -33,4 +35,6 @@ __all__ = [
     "make_tag_demo",
     "make_test_pattern",
     "pack_begin",
+    "panel_by_size",
+    "require_panel",
 ]

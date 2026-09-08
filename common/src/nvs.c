@@ -45,6 +45,7 @@
 #define NVS_KEY_DEVICE_ID "did"
 #define NVS_KEY_HARDWARE_ID "hid"
 #define NVS_KEY_BOOT_MODE "bmode"
+#define NVS_KEY_EPD_PANEL "epanel"
 
 typedef struct {
 	uint8_t mac[NVS_MAC_SIZE];
@@ -53,12 +54,14 @@ typedef struct {
 	uint32_t device_id;
 	uint32_t hardware_id;
 	uint8_t boot_mode;
+	uint8_t epd_panel;
 	uint8_t have_mac;
 	uint8_t have_sn;
 	uint8_t have_dtype;
 	uint8_t have_did;
 	uint8_t have_hid;
 	uint8_t have_bmode;
+	uint8_t have_epanel;
 } nvs_cache_t;
 
 static nvs_cache_t s_cache;
@@ -86,6 +89,9 @@ static void nvs_cache_apply_defaults(void)
 	}
 	if (!s_cache.have_bmode) {
 		s_cache.boot_mode = NVS_BOOT_MODE_APP;
+	}
+	if (!s_cache.have_epanel) {
+		s_cache.epd_panel = NVS_EPD_PANEL_2IN9;
 	}
 }
 
@@ -153,6 +159,16 @@ static int nvs_settings_set(const char *name, size_t len, settings_read_cb read_
 		rc = read_cb(cb_arg, &s_cache.boot_mode, len);
 		if (rc >= 0) {
 			s_cache.have_bmode = 1U;
+		}
+		return rc;
+	}
+	if (settings_name_steq(name, NVS_KEY_EPD_PANEL, &next) && (next == NULL)) {
+		if (len != sizeof(s_cache.epd_panel)) {
+			return -EINVAL;
+		}
+		rc = read_cb(cb_arg, &s_cache.epd_panel, len);
+		if (rc >= 0) {
+			s_cache.have_epanel = 1U;
 		}
 		return rc;
 	}
@@ -251,6 +267,9 @@ void nvs_log_boot_dump(void)
 		 (unsigned)s_cache.have_hid);
 	LOG_INFO("  bmode=%u have=%u  hw=%s app=%s build=%s", (unsigned)nvs_boot_mode_get(),
 		 (unsigned)s_cache.have_bmode, hw_ver, app_ver, build);
+	LOG_INFO("  epanel=%u (%s) have=%u", (unsigned)nvs_epd_panel_get(),
+		 (nvs_epd_panel_get() == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in",
+		 (unsigned)s_cache.have_epanel);
 	LOG_INFO("nvs dump ----");
 }
 
@@ -269,8 +288,10 @@ void nvs_factory_reset(void)
 	s_cache.device_id = NVS_DEVICE_ID_DEFAULT;
 	s_cache.hardware_id = NVS_DEFAULT_HARDWARE_ID;
 	s_cache.boot_mode = NVS_BOOT_MODE_APP;
+	s_cache.epd_panel = NVS_EPD_PANEL_2IN9;
 	s_cache.have_mac = s_cache.have_sn = s_cache.have_dtype = 1U;
 	s_cache.have_did = s_cache.have_hid = s_cache.have_bmode = 1U;
+	s_cache.have_epanel = 1U;
 
 	(void)nvs_save_one(NVS_KEY_MAC, s_cache.mac, NVS_MAC_SIZE);
 	(void)nvs_save_one(NVS_KEY_SN, s_cache.sn, strlen(s_cache.sn) + 1U);
@@ -278,6 +299,7 @@ void nvs_factory_reset(void)
 	(void)nvs_save_one(NVS_KEY_DEVICE_ID, &s_cache.device_id, sizeof(s_cache.device_id));
 	(void)nvs_save_one(NVS_KEY_HARDWARE_ID, &s_cache.hardware_id, sizeof(s_cache.hardware_id));
 	(void)nvs_save_one(NVS_KEY_BOOT_MODE, &s_cache.boot_mode, sizeof(s_cache.boot_mode));
+	(void)nvs_save_one(NVS_KEY_EPD_PANEL, &s_cache.epd_panel, sizeof(s_cache.epd_panel));
 
 	LOG_INFO("nvs factory_reset done");
 }
@@ -472,4 +494,29 @@ uint8_t nvs_boot_mode_get(void)
 		nvs_init();
 	}
 	return s_cache.boot_mode;
+}
+
+bool nvs_epd_panel_set(uint8_t panel)
+{
+	if ((panel != NVS_EPD_PANEL_2IN9) && (panel != NVS_EPD_PANEL_4IN2)) {
+		return false;
+	}
+	if (!s_ready) {
+		nvs_init();
+	}
+	s_cache.epd_panel = panel;
+	s_cache.have_epanel = 1U;
+	return nvs_save_one(NVS_KEY_EPD_PANEL, &s_cache.epd_panel, sizeof(s_cache.epd_panel));
+}
+
+uint8_t nvs_epd_panel_get(void)
+{
+	if (!s_ready) {
+		nvs_init();
+	}
+	if ((s_cache.epd_panel != NVS_EPD_PANEL_2IN9) &&
+	    (s_cache.epd_panel != NVS_EPD_PANEL_4IN2)) {
+		return NVS_EPD_PANEL_2IN9;
+	}
+	return s_cache.epd_panel;
 }

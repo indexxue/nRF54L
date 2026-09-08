@@ -1,6 +1,6 @@
 /**
  * @file epd_board.h
- * @brief 工程侧墨水屏胶水：board SPI + GPIO → cbb/epd（GDEY029Z95 2.9" BWR）。
+ * @brief 工程侧墨水屏胶水：board SPI + GPIO → cbb/epd（2.9" / 4.2" BWR 可切换）。
  */
 
 #ifndef EINK_TAG_EPD_BOARD_H
@@ -22,13 +22,20 @@ extern "C" {
 #define EPD_BOARD_PLANES_BW  (1U << 0)
 #define EPD_BOARD_PLANES_RED (1U << 1)
 
+/** 与 NVS_EPD_PANEL_* 同值 */
+#define EPD_BOARD_SIZE_2IN9 0U
+#define EPD_BOARD_SIZE_4IN2 1U
+
 /**
  * SPI00 自检：device_ready + 寄存器 + MOSI↔MISO 回环。
  * 须在 epd_board_init() 之前调用；失败则不要测屏。
  */
 status_t epd_board_spi_selftest(void);
 
-/** 配置 SPI/CS/DC/RST/BUSY，注册 GDEY029Z95，硬件 init（调用线程上可能阻塞数秒）。 */
+/**
+ * 配置 SPI/CS/DC/RST/BUSY，按 NVS epanel 选 GDEY029Z95 或 WS 4.2B V2，
+ * 硬件 init（调用线程上可能阻塞数秒）。
+ */
 status_t epd_board_init(void);
 
 /**
@@ -52,6 +59,9 @@ void epd_board_unlock_planes(void);
 
 bool epd_board_is_ready(void);
 bool epd_board_is_busy(void);
+
+uint8_t epd_board_size(void);
+const char *epd_board_panel_name(void);
 
 uint16_t epd_board_width(void);
 uint16_t epd_board_height(void);

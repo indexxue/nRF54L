@@ -10,9 +10,7 @@ from typing import Any
 from nrf_console.app.controller import BleController, UiEvent
 from nrf_console.config import AppConfig
 from nrf_console.designer.planes import flip_plane_y
-from nrf_console.epd.plane import HEIGHT as FW_HEIGHT
-from nrf_console.epd.plane import PLANE_SIZE
-from nrf_console.epd.plane import WIDTH as FW_WIDTH
+from nrf_console.epd.plane import PANEL_PROFILES, geometry_for
 
 
 def _serialize_event(ev: UiEvent) -> dict[str, Any]:
@@ -119,33 +117,55 @@ class DesignerApi:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
 
+    def supported_sizes(self) -> dict[str, Any]:
+        """Known firmware panels (hint only; any canvas size may upload)."""
+        return {
+            "ok": True,
+            "sizes": [
+                {
+                    "width": p.width,
+                    "height": p.height,
+                    "name": p.name,
+                    "flip_y": p.flip_y,
+                }
+                for p in PANEL_PROFILES
+            ],
+            "note": "host accepts any size; device DISP_BEGIN rejects mismatch",
+        }
+
     def upload(self, width: int, height: int, bw_b64: str, red_b64: str) -> dict[str, Any]:
         try:
             w, h = int(width), int(height)
-        except (TypeError, ValueError):
-            return {"ok": False, "error": "bad size"}
-        if w != FW_WIDTH or h != FW_HEIGHT:
-            return {
-                "ok": False,
-                "error": f"firmware upload only {FW_WIDTH}x{FW_HEIGHT} (got {w}x{h})",
-            }
+            geom = geometry_for(w, h)
+        except (TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
         try:
             bw = base64.b64decode(bw_b64)
-            red = base64.b64decode(red_b64) if red_b64 else b"\x00" * PLANE_SIZE
+            red = base64.b64decode(red_b64) if red_b64 else b"\x00" * geom.plane_size
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"b64 decode: {exc}"}
-        try:
-            bw = flip_plane_y(bw, w, h)
-            red = flip_plane_y(red, w, h)
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
-        if len(bw) != PLANE_SIZE or len(red) != PLANE_SIZE:
+        # Known panels with flip_y: map logical top → RAM (firmware panel.flip_y)
+        if geom.flip_y:
+            try:
+                bw = flip_plane_y(bw, w, h)
+                red = flip_plane_y(red, w, h)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+        if len(bw) != geom.plane_size or len(red) != geom.plane_size:
             return {
                 "ok": False,
-                "error": f"plane size bw={len(bw)} red={len(red)} need {PLANE_SIZE}",
+                "error": (
+                    f"plane size bw={len(bw)} red={len(red)} "
+                    f"need {geom.plane_size} ({geom.width}x{geom.height})"
+                ),
             }
         try:
-            self.controller.upload_planes(bw, red, label="designer")
+            self.controller.upload_planes(
+                bw, red, label=f"designer-{geom.name}", width=w, height=h
+            )
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
-        return {"ok": True, "message": "upload queued"}
+        return {
+            "ok": True,
+            "message": f"upload queued ({geom.width}x{geom.height} {geom.name})",
+        }

@@ -165,11 +165,6 @@ BLE_JS = r"""
         setBleStatus("export failed: " + e, "err");
         return;
       }
-      if (planes.width !== 128 || planes.height !== 296) {
-        setBleStatus(`upload needs 128×296 (now ${planes.width}×${planes.height})`, "err");
-        setStatus(`固件目前仅支持 128×296，请改尺寸后再上传`, "err");
-        return;
-      }
       setBleStatus("uploading…");
       $("btnBleUpload").disabled = true;
       try {

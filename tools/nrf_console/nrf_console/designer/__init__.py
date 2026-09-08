@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from nrf_console.config import AppConfig, save_config
 from nrf_console.designer.bridge import DesignerApi
-
-STATIC = Path(__file__).resolve().parent / "static" / "index.html"
+from nrf_console.paths import designer_index_html
 
 
 def run_designer(cfg: AppConfig) -> None:
@@ -20,15 +17,16 @@ def run_designer(cfg: AppConfig) -> None:
             f"({exc})"
         ) from exc
 
-    if not STATIC.is_file():
-        raise SystemExit(f"designer HTML missing: {STATIC}")
+    static = designer_index_html()
+    if not static.is_file():
+        raise SystemExit(f"designer HTML missing: {static}")
 
     api = DesignerApi(cfg)
     api.start()
 
     window = webview.create_window(
         "EPD Tag Designer",
-        url=STATIC.as_uri(),
+        url=static.as_uri(),
         js_api=api,
         width=1280,
         height=860,

@@ -27,7 +27,7 @@ class Transport(ABC):
     @abstractmethod
     async def scan(
         self,
-        timeout_s: float = 5.0,
+        timeout_s: float = 8.0,
         name_filter: str = "",
     ) -> list[DeviceInfo]:
         raise NotImplementedError

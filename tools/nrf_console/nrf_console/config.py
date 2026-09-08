@@ -24,7 +24,7 @@ class AppConfig:
     rx_uuid: str = DEFAULT_RX_UUID
     tx_uuid: str = DEFAULT_TX_UUID
     auto_notify: bool = True
-    scan_timeout_s: float = 5.0
+    scan_timeout_s: float = 8.0
     appearance_mode: str = "dark"
     color_theme: str = "blue"
     window_geometry: str = "960x640"

@@ -19,13 +19,17 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/reboot.h>
 
 #include "ble.h"
 #include "ble_cmd.h"
+#include "button.h"
 #include "crc32.h"
 #include "epd_board.h"
 #include "event.h"
+#include "led_scene.h"
 #include "log.h"
+#include "nvs.h"
 
 #define APP_HB_FLAG_ADV  (1U << 0)
 #define APP_HB_FLAG_CONN (1U << 1)
@@ -57,7 +61,78 @@ static K_THREAD_STACK_DEFINE(s_epd_stack, APP_EPD_STACK_SIZE);
 static struct k_thread s_epd_thread;
 K_MSGQ_DEFINE(s_epd_jobs, sizeof(uint8_t), 2, 1);
 static atomic_t s_epd_ready;
+static atomic_t s_epd_led_applied;
 static app_disp_session_t s_disp;
+
+static void app_epd_led_show(uint8_t panel)
+{
+	led_scene_cancel(LED_SCENE_ID_BOOTUP);
+	led_scene_cancel(LED_SCENE_ID_EPD_2IN9);
+	led_scene_cancel(LED_SCENE_ID_EPD_4IN2);
+
+	if (panel == NVS_EPD_PANEL_4IN2) {
+		led_scene_run(LED_SCENE_ID_EPD_4IN2);
+		LOG_INFO("app: LED → 4.2in (blue solid)");
+	} else {
+		led_scene_run(LED_SCENE_ID_EPD_2IN9);
+		LOG_INFO("app: LED → 2.9in (green solid)");
+	}
+}
+
+static void app_epd_panel_switch(uint8_t panel)
+{
+	uint8_t cur = nvs_epd_panel_get();
+
+	if ((panel != NVS_EPD_PANEL_2IN9) && (panel != NVS_EPD_PANEL_4IN2)) {
+		return;
+	}
+
+	app_epd_led_show(panel);
+
+	if (cur == panel) {
+		LOG_INFO("app: epd panel already %s",
+			 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
+		return;
+	}
+
+	if (!nvs_epd_panel_set(panel)) {
+		LOG_ERROR("app: nvs_epd_panel_set(%u) failed", (unsigned)panel);
+		led_scene_run(LED_SCENE_ID_ERROR);
+		return;
+	}
+
+	LOG_INFO("app: epd panel → %s saved, reboot",
+		 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
+	k_msleep(500);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
+static void app_handle_button(void)
+{
+	btn_id_e id;
+	btn_event_e ev;
+
+	if (!event_is_set(EVT_ID_BUTTON)) {
+		return;
+	}
+
+	button_last_event_get(&id, &ev);
+	event_clear(EVT_ID_BUTTON);
+	button_last_event_clear();
+
+	/* BTN1=CONFIRM：双击→4.2"，长按10s→2.9" */
+	if (id != BTN_ID_CONFIRM) {
+		return;
+	}
+
+	if (ev == BTN_EVENT_DOUBLE_CLICK) {
+		LOG_INFO("app: BTN double → 4.2in");
+		app_epd_panel_switch(NVS_EPD_PANEL_4IN2);
+	} else if (ev == BTN_EVENT_LONG_PRESS) {
+		LOG_INFO("app: BTN long → 2.9in");
+		app_epd_panel_switch(NVS_EPD_PANEL_2IN9);
+	}
+}
 
 static status_t app_epd_queue_job(uint8_t job)
 {
@@ -433,6 +508,7 @@ static status_t app_epd_start_async(void)
 	k_tid_t tid;
 
 	atomic_set(&s_epd_ready, 0);
+	atomic_set(&s_epd_led_applied, 0);
 	app_disp_reset();
 
 	tid = k_thread_create(&s_epd_thread, s_epd_stack, K_THREAD_STACK_SIZEOF(s_epd_stack),
@@ -451,9 +527,15 @@ static status_t app_epd_start_async(void)
 status_t app_init(void)
 {
 	status_t st;
+	uint8_t panel;
 
 	LOG_INFO("pins UART P1.09/P1.10 | LED_G P1.05 LED_B P1.04 | BTN P0.00/P0.01");
 	LOG_INFO("epd SPI00 SCK=P2.01 MOSI=P2.04 CS=P2.05 | DC=P1.08 RST=P1.07 BUSY=P1.06");
+
+	/* 上电保持 BOOTUP 绿/蓝交替闪；EPD ready 后再切尺寸常亮 */
+	panel = nvs_epd_panel_get();
+	LOG_INFO("app: NVS epanel=%u (%s) — dbl=4.2in long10s=2.9in", (unsigned)panel,
+		 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
 
 	st = ble_init();
 	if (st != STATUS_OK) {
@@ -476,21 +558,30 @@ void app_run(void)
 
 	LOG_INFO("eink_tag run: PING | DISPLAY=demo | BEGIN/CHUNK/REFRESH | HB=%us",
 		 (unsigned int)(APP_HB_PERIOD_MS / 1000U));
+	LOG_INFO("eink_tag btn: CONFIRM dbl→4.2in | long10s→2.9in (NVS+reboot)");
 
 	app_ble_cmd_smoke_inject();
 
 	while (1) {
 		start_poll();
 
+		/* EPD init 完：关双灯交替，切对应尺寸单灯常亮 */
+		if ((atomic_get(&s_epd_ready) != 0) && (atomic_cas(&s_epd_led_applied, 0, 1))) {
+			app_epd_led_show(epd_board_size());
+		}
+
+		app_handle_button();
+
 		if (event_is_set(EVT_ID_BLE_CMD)) {
 			app_handle_ble_cmds();
 		}
 
 		if ((tick % APP_HB_PERIOD_TICKS) == 0U) {
-			LOG_INFO("status tick=%u adv=%d conn=%d epd_ready=%d epd_busy=%d",
+			LOG_INFO("status tick=%u adv=%d conn=%d epd_ready=%d epd_busy=%d size=%s",
 				 tick / APP_HB_PERIOD_TICKS, ble_is_advertising() ? 1 : 0,
 				 ble_is_connected() ? 1 : 0, (int)atomic_get(&s_epd_ready),
-				 epd_board_is_busy() ? 1 : 0);
+				 epd_board_is_busy() ? 1 : 0,
+				 (epd_board_size() == EPD_BOARD_SIZE_4IN2) ? "4.2in" : "2.9in");
 			app_ble_heartbeat_try(tick / APP_HB_PERIOD_TICKS);
 		}
 		tick++;

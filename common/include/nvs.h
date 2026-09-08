@@ -86,6 +86,10 @@ extern "C" {
 #define NVS_BOOT_MODE_APP     0U
 #define NVS_BOOT_MODE_FACTORY 1U
 
+/** 墨水屏面板尺寸（NVS 键 epanel）；上电选驱动 */
+#define NVS_EPD_PANEL_2IN9 0U /**< GDEY029Z95 2.9" BWR 128×296 */
+#define NVS_EPD_PANEL_4IN2 1U /**< WS 4.2" B V2 BWR 400×300 */
+
 /* -------------------------------------------------------------------------- */
 /* 生命周期                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -135,6 +139,9 @@ bool nvs_build_date_format(uint32_t ymd, char *out, size_t out_cap);
 
 bool nvs_boot_mode_set(uint8_t mode);
 uint8_t nvs_boot_mode_get(void);
+
+bool nvs_epd_panel_set(uint8_t panel);
+uint8_t nvs_epd_panel_get(void);
 
 /** 上电后打印 NVS 缓存摘要（MAC/SN/did/hid/版本等）。 */
 void nvs_log_boot_dump(void);
