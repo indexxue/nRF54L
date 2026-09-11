@@ -10,6 +10,7 @@
  *   HEARTBEAT(8001)    上行约 20s
  *
  * EPD 在独立线程；main 只跑 start_poll / BLE。
+ * 睡眠：停广播；按键(WAKE)唤醒 / 断连后再开快广播窗口；窗口超时才进睡。
  */
 
 #include "start.h"
@@ -23,6 +24,7 @@
 
 #include "ble.h"
 #include "ble_cmd.h"
+#include "ble_evt.h"
 #include "button.h"
 #include "crc32.h"
 #include "epd_board.h"
@@ -37,6 +39,8 @@
 #define APP_LOOP_MS         20U
 #define APP_HB_PERIOD_MS    20000U
 #define APP_HB_PERIOD_TICKS (APP_HB_PERIOD_MS / APP_LOOP_MS)
+/** 可发现窗口：上电/按键唤醒后快广播多久；超时未连接则停广进睡 */
+#define APP_ADV_WINDOW_MS   30000U
 
 #define APP_EPD_STACK_SIZE  4096
 #define APP_EPD_THREAD_PRIO 8
@@ -63,6 +67,120 @@ K_MSGQ_DEFINE(s_epd_jobs, sizeof(uint8_t), 2, 1);
 static atomic_t s_epd_ready;
 static atomic_t s_epd_led_applied;
 static app_disp_session_t s_disp;
+
+static int64_t s_adv_deadline_ms;
+static bool s_sleeping;
+
+static void app_epd_led_show(uint8_t panel);
+
+/** 打开/刷新可发现窗口（快广播时段）。 */
+static void app_adv_window_arm(void)
+{
+	s_adv_deadline_ms = k_uptime_get() + (int64_t)APP_ADV_WINDOW_MS;
+}
+
+static void app_led_all_off(void)
+{
+	led_scene_cancel(LED_SCENE_ID_BOOTUP);
+	led_scene_cancel(LED_SCENE_ID_EPD_2IN9);
+	led_scene_cancel(LED_SCENE_ID_EPD_4IN2);
+	led_scene_cancel(LED_SCENE_ID_ERROR);
+	led_scene_cancel(LED_SCENE_ID_SUCCESS);
+	led_scene_cancel(LED_SCENE_ID_TRIGGER);
+	led_scene_cancel(LED_SCENE_ID_PAIRING);
+	led_scene_led_direct_set(LED_SCENE_LED_0, false);
+	led_scene_led_direct_set(LED_SCENE_LED_1, false);
+}
+
+static void app_sleep_enter(void)
+{
+	status_t st;
+
+	event_wait_reset();
+	app_led_all_off();
+
+	st = ble_adv_stop();
+	if (st != STATUS_OK) {
+		LOG_WARN("app: adv stop failed st=%d", (int)st);
+	}
+
+	st = epd_board_sleep();
+	if (st != STATUS_OK) {
+		LOG_WARN("app: epd sleep skipped st=%d", (int)st);
+	}
+
+	button_wake_enable();
+	s_sleeping = true;
+	atomic_set(&s_epd_led_applied, 0);
+	LOG_INFO("app: SLEEP enter (adv off, epd sleep, wake=BTN_PERMISSION_WAKE)");
+}
+
+static void app_sleep_exit(void)
+{
+	status_t st;
+
+	s_sleeping = false;
+	button_wake_disable();
+
+	(void)ble_adv_set_slow(false);
+	st = ble_adv_start();
+	if (st != STATUS_OK) {
+		LOG_WARN("app: adv start after wake failed st=%d", (int)st);
+	}
+	app_adv_window_arm();
+
+	if (atomic_get(&s_epd_ready) != 0) {
+		app_epd_led_show(epd_board_size());
+		atomic_set(&s_epd_led_applied, 1);
+	}
+
+	LOG_INFO("app: SLEEP exit → advertising %us window",
+		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U));
+}
+
+static bool app_sleep_can_enter(void)
+{
+	if (s_sleeping) {
+		return false;
+	}
+	if (atomic_get(&s_epd_ready) == 0) {
+		return false;
+	}
+	if (ble_is_connected()) {
+		return false;
+	}
+	if (epd_board_is_busy()) {
+		return false;
+	}
+	if (s_disp.state != APP_DISP_IDLE) {
+		return false;
+	}
+	if (k_msgq_num_used_get(&s_epd_jobs) != 0U) {
+		return false;
+	}
+	/* 广播窗口未到：保持可发现 */
+	if (k_uptime_get() < s_adv_deadline_ms) {
+		return false;
+	}
+	return true;
+}
+
+static void app_ble_evt_cb(const ble_evt_t *evt, void *user)
+{
+	ARG_UNUSED(user);
+
+	if (evt == NULL) {
+		return;
+	}
+
+	if (evt->id == BLE_EVT_CONNECTED) {
+		event_set(EVT_ID_BLE_GAP);
+	} else if (evt->id == BLE_EVT_DISCONNECTED) {
+		/* 断连后 recycled 会再广播；再等 ADV_WINDOW 才进睡，便于用户重连 */
+		app_adv_window_arm();
+		event_set(EVT_ID_BLE_GAP);
+	}
+}
 
 static void app_epd_led_show(uint8_t panel)
 {
@@ -116,11 +234,12 @@ static void app_handle_button(void)
 		return;
 	}
 
+	app_adv_window_arm();
 	button_last_event_get(&id, &ev);
 	event_clear(EVT_ID_BUTTON);
 	button_last_event_clear();
 
-	/* BTN1=CONFIRM：双击→4.2"，长按10s→2.9" */
+	/* BTN1=CONFIRM：双击→4.2"，长按10s→2.9"；带 WAKE 权限的键可从睡眠唤醒并开广播 */
 	if (id != BTN_ID_CONFIRM) {
 		return;
 	}
@@ -373,6 +492,7 @@ static void app_handle_ble_cmds(void)
 	status_t st;
 
 	while (ble_cmd_fetch(&msg)) {
+		/* 业务活动不延长可发现窗口；仅连接中有效 */
 		LOG_INFO("app: CMD recv id=%u plen=%u", (unsigned int)msg.cmd_id,
 			 (unsigned int)msg.payload_len);
 
@@ -537,6 +657,11 @@ status_t app_init(void)
 	LOG_INFO("app: NVS epanel=%u (%s) — dbl=4.2in long10s=2.9in", (unsigned)panel,
 		 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
 
+	ble_evt_set_callback(app_ble_evt_cb, NULL);
+	/* 断连后自动再广播，由 ADV_WINDOW 超时后再停广进睡 */
+	ble_adv_set_restart_on_disconnect(true);
+	app_adv_window_arm();
+
 	st = ble_init();
 	if (st != STATUS_OK) {
 		LOG_ERROR("ble_init failed: %d", (int)st);
@@ -559,8 +684,12 @@ void app_run(void)
 	LOG_INFO("eink_tag run: PING | DISPLAY=demo | BEGIN/CHUNK/REFRESH | HB=%us",
 		 (unsigned int)(APP_HB_PERIOD_MS / 1000U));
 	LOG_INFO("eink_tag btn: CONFIRM dbl→4.2in | long10s→2.9in (NVS+reboot)");
+	LOG_INFO("eink_tag sleep: adv window %us; disc→re-adv %us then sleep; wake=WAKE btn",
+		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U),
+		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U));
 
 	app_ble_cmd_smoke_inject();
+	app_adv_window_arm();
 
 	while (1) {
 		start_poll();
@@ -572,18 +701,32 @@ void app_run(void)
 
 		app_handle_button();
 
+		if (event_is_set(EVT_ID_BLE_GAP)) {
+			/* connect/disconnect 已在回调里改窗口；此处仅清位 */
+		}
+
 		if (event_is_set(EVT_ID_BLE_CMD)) {
 			app_handle_ble_cmds();
 		}
 
 		if ((tick % APP_HB_PERIOD_TICKS) == 0U) {
-			LOG_INFO("status tick=%u adv=%d conn=%d epd_ready=%d epd_busy=%d size=%s",
+			LOG_INFO("status tick=%u adv=%d conn=%d sleep=%d epd_ready=%d "
+				 "epd_busy=%d epd_asl=%d size=%s",
 				 tick / APP_HB_PERIOD_TICKS, ble_is_advertising() ? 1 : 0,
-				 ble_is_connected() ? 1 : 0, (int)atomic_get(&s_epd_ready),
-				 epd_board_is_busy() ? 1 : 0,
+				 ble_is_connected() ? 1 : 0, s_sleeping ? 1 : 0,
+				 (int)atomic_get(&s_epd_ready), epd_board_is_busy() ? 1 : 0,
+				 epd_board_is_asleep() ? 1 : 0,
 				 (epd_board_size() == EPD_BOARD_SIZE_4IN2) ? "4.2in" : "2.9in");
 			app_ble_heartbeat_try(tick / APP_HB_PERIOD_TICKS);
 		}
+
+		if (app_sleep_can_enter()) {
+			app_sleep_enter();
+			(void)event_wait(-1);
+			app_sleep_exit();
+			continue;
+		}
+
 		tick++;
 		k_sleep(K_MSEC(APP_LOOP_MS));
 	}

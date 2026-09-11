@@ -60,6 +60,7 @@ typedef enum
 	BTN_PERMISSION_RIGHT = (1 << 9),
 	BTN_PERMISSION_CONFIRM = (1 << 10),
 	BTN_PERMISSION_BACK = (1 << 11),
+	BTN_PERMISSION_WAKE = (1 << 12), /**< 可从浅睡 GPIO 唤醒 */
 } btn_permission_e;
 
 /** 按键事件回调（须配合周期性 button_schedule）。 */
@@ -75,6 +76,13 @@ void button_deinit(void);
 
 /** 按 FLEX_BTN_SCAN_FREQ_HZ（默认 50Hz）周期调用，例如每 20ms。 */
 void button_schedule(void);
+
+/**
+ * 仅为带 BTN_PERMISSION_WAKE 的键开边沿 IRQ；ISR 只 event_set_from_isr(EVT_ID_BUTTON)。
+ * 浅睡前 enable，醒来后 disable（与 button_schedule 互斥使用）。
+ */
+void button_wake_enable(void);
+void button_wake_disable(void);
 
 void button_last_event_get(btn_id_e *id, btn_event_e *event);
 void button_last_event_clear(void);

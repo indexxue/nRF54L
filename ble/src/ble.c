@@ -79,6 +79,31 @@ bool ble_is_connected(void)
 	return ble_gap_is_connected();
 }
 
+status_t ble_adv_start(void)
+{
+	return ble_gap_start_adv();
+}
+
+status_t ble_adv_stop(void)
+{
+	return ble_gap_stop_adv();
+}
+
+void ble_adv_set_restart_on_disconnect(bool enable)
+{
+	ble_gap_set_restart_on_disconnect(enable);
+}
+
+status_t ble_adv_set_slow(bool slow)
+{
+	return ble_gap_set_adv_slow(slow);
+}
+
+bool ble_adv_is_slow(void)
+{
+	return ble_gap_is_adv_slow();
+}
+
 uint32_t ble_count_connected(void)
 {
 	return ble_gap_count_connected();

@@ -123,6 +123,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\new_project.ps1 -Name myapp
 | [`doc/flash_layout.md`](doc/flash_layout.md) | RRAM 分区与写权限 |
 | [`doc/plan.md`](doc/plan.md) | 阶段计划与验收状态 |
 | [`doc/decisions.md`](doc/decisions.md) | 架构决策记录 |
+| [`doc/zephyr_eink_tag_deep_dive.md`](doc/zephyr_eink_tag_deep_dive.md) | 面向 `eink_tag` 的 Zephyr 深挖路线 |
 | [`firmware/README.md`](firmware/README.md) | 发布包命名约定 |
 | [`boards/README.md`](boards/README.md) | 自定义板接入 |
 | [`common/README.md`](common/README.md) | 共享模块说明 |

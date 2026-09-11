@@ -31,6 +31,20 @@ bool ble_is_ready(void);
 bool ble_is_advertising(void);
 bool ble_is_connected(void);
 
+/** 开始/停止可连接广播（未连接时）。 */
+status_t ble_adv_start(void);
+status_t ble_adv_stop(void);
+
+/**
+ * 断线后是否自动再广播。false=按键唤醒模式（eink_tag）。
+ * @see ble_gap_set_restart_on_disconnect
+ */
+void ble_adv_set_restart_on_disconnect(bool enable);
+
+/** 可选慢广播；按键唤醒产品通常只用快广播窗口。 */
+status_t ble_adv_set_slow(bool slow);
+bool ble_adv_is_slow(void);
+
 uint32_t ble_count_connected(void);
 uint32_t ble_count_disconnected(void);
 

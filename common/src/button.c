@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/sys/util.h>
 
 #include "board.h"
 #include "event.h"
@@ -32,6 +33,9 @@ typedef struct
 	button_list_t *list;
 	btn_notify_t notify;
 	bool ready;
+	bool wake_irq_on;
+	bool wake_cb_ready;
+	struct gpio_callback wake_cb;
 } button_item_t;
 
 static button_list_t s_button_list[BUTTON_MAX_NUM];
@@ -212,6 +216,90 @@ void button_schedule(void)
 		return;
 	}
 	(void)flex_button_scan();
+}
+
+static void button_wake_isr(const struct device *port, struct gpio_callback *cb, uint32_t pins)
+{
+	ARG_UNUSED(port);
+	ARG_UNUSED(cb);
+	ARG_UNUSED(pins);
+	event_set_from_isr(EVT_ID_BUTTON);
+}
+
+void button_wake_enable(void)
+{
+	uint8_t i;
+	uint32_t pin_mask = 0U;
+	const struct device *port = NULL;
+
+	if (!self.ready || (self.list == NULL) || (self.num == 0U))
+	{
+		return;
+	}
+
+	for (i = 0U; i < self.num; i++)
+	{
+		button_list_t *p = &self.list[i];
+
+		if ((p->gpio == NULL) || ((p->permission & (uint16_t)BTN_PERMISSION_WAKE) == 0U))
+		{
+			continue;
+		}
+		if (!device_is_ready(p->gpio->port))
+		{
+			continue;
+		}
+		if (port == NULL)
+		{
+			port = p->gpio->port;
+		}
+		else if (port != p->gpio->port)
+		{
+			LOG_WARN("button: wake IRQ skip %s (other port)",
+				 p->name != NULL ? p->name : "?");
+			continue;
+		}
+		pin_mask |= BIT(p->gpio->pin);
+		(void)gpio_pin_interrupt_configure_dt(p->gpio, GPIO_INT_EDGE_TO_ACTIVE);
+	}
+
+	if ((port == NULL) || (pin_mask == 0U))
+	{
+		LOG_WARN("button: no WAKE permission keys");
+		return;
+	}
+
+	if (!self.wake_cb_ready)
+	{
+		gpio_init_callback(&self.wake_cb, button_wake_isr, pin_mask);
+		(void)gpio_add_callback(port, &self.wake_cb);
+		self.wake_cb_ready = true;
+	}
+
+	self.wake_irq_on = true;
+}
+
+void button_wake_disable(void)
+{
+	uint8_t i;
+
+	if (!self.ready || (self.list == NULL))
+	{
+		return;
+	}
+
+	for (i = 0U; i < self.num; i++)
+	{
+		button_list_t *p = &self.list[i];
+
+		if ((p->gpio == NULL) || ((p->permission & (uint16_t)BTN_PERMISSION_WAKE) == 0U))
+		{
+			continue;
+		}
+		(void)gpio_pin_interrupt_configure_dt(p->gpio, GPIO_INT_DISABLE);
+	}
+
+	self.wake_irq_on = false;
 }
 
 void button_last_event_get(btn_id_e *id, btn_event_e *event)

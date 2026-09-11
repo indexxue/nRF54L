@@ -110,12 +110,44 @@ void event_clear(event_id_e id)
     (void)k_mutex_unlock(&s_event.mutex);
 }
 
-void event_schedule(void)
+void event_wait_reset(void)
 {
     if (!s_event.ready)
     {
         return;
     }
 
-    (void)k_sem_take(&s_event.sem, K_FOREVER);
+    while (k_sem_take(&s_event.sem, K_NO_WAIT) == 0)
+    {
+    }
+}
+
+bool event_wait(int32_t timeout_ms)
+{
+    k_timeout_t t;
+
+    if (!s_event.ready)
+    {
+        return false;
+    }
+
+    if (timeout_ms < 0)
+    {
+        t = K_FOREVER;
+    }
+    else if (timeout_ms == 0)
+    {
+        t = K_NO_WAIT;
+    }
+    else
+    {
+        t = K_MSEC(timeout_ms);
+    }
+
+    return k_sem_take(&s_event.sem, t) == 0;
+}
+
+void event_schedule(void)
+{
+    (void)event_wait(-1);
 }

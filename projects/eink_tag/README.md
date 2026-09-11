@@ -36,7 +36,32 @@ BLE 协议在仓库 [`ble/`](../../ble/)（`modules/nrf54_ble`）。
 - 下行上传：`2002 BEGIN` → `2003 CHUNK`×N → `2004 REFRESH`（帧缓冲，见 [`ble/docs/display_plane_upload.md`](../../ble/docs/display_plane_upload.md)）  
 - 上行心跳：`8001` HEARTBEAT（约 **20s**，需 TX Notify）  
 
-等串口出现 `epd: ready` 后再发 DISPLAY / 上传；刷屏期间灯效/BLE 不停。  
+等串口出现 `epd: ready` 后再发 DISPLAY / 上传；刷屏期间灯效/BLE 不停。
+
+## 低功耗（按键唤醒 + 广播窗口）
+
+市面常见 BLE 标签机制：
+
+```text
+[睡眠: 停广播 / EPD sleep / 灭灯]
+        ↑ 可发现窗口超时(30s)         ↓ 带 WAKE 权限按键
+[可发现: 快广播 30s] ←────────────────┘
+        ↓ 手机连接
+[已连接: 保持工作]
+        ↓ 用户断连
+[可发现: 再广播 30s] → 超时 → [睡眠]
+```
+
+| 项 | 行为 |
+|----|------|
+| 睡眠 | **停广播** + EPD sleep + 灭灯 + main `event_wait` |
+| 唤醒 | **`BTN_PERMISSION_WAKE` 按键** → 开快广播 30s |
+| 断连 | 自动再广播，再等 **30s** 可发现窗口后才进睡 |
+| 窗口内按键 | 刷新 30s 计时 |
+
+串口关键字：`app: SLEEP enter` / `app: SLEEP exit → advertising`。
+
+电流验收：睡眠（无广播）应明显低于可发现窗口；测电流时可再关 UART。
 
 **不要用** nRF Connect 的 SMP / DFU / UART 菜单（会报 `SMP service not found`）。用自定义 128-bit 服务：
 

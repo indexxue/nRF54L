@@ -57,6 +57,14 @@ status_t epd_board_refresh(void);
 status_t epd_board_lock_planes(void);
 void epd_board_unlock_planes(void);
 
+/**
+ * 面板进 deep sleep（保持 MCU 帧缓冲）。忙时拒绝。
+ * 下次刷屏前须 epd_board_wake()（refresh/test_run 内会自动 wake）。
+ */
+status_t epd_board_sleep(void);
+status_t epd_board_wake(void);
+bool epd_board_is_asleep(void);
+
 bool epd_board_is_ready(void);
 bool epd_board_is_busy(void);
 

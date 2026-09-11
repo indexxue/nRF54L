@@ -44,14 +44,14 @@ static const board_button_spec_t s_buttons[] = {
 		.gpio = &s_btn1,
 		.id = (uint8_t)BTN_ID_CONFIRM,
 		.active_level = 0U,
-		.permission = (uint16_t)BTN_PERMISSION_CONFIRM,
+		.permission = (uint16_t)(BTN_PERMISSION_CONFIRM | BTN_PERMISSION_WAKE),
 		.name = "btn1",
 	},
 	{
 		.gpio = &s_btn2,
 		.id = (uint8_t)BTN_ID_BACK,
 		.active_level = 0U,
-		.permission = (uint16_t)BTN_PERMISSION_BACK,
+		.permission = (uint16_t)(BTN_PERMISSION_BACK | BTN_PERMISSION_WAKE),
 		.name = "btn2",
 	},
 };

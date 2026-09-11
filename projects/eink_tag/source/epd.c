@@ -19,6 +19,7 @@
 #include <hal/nrf_spim.h>
 
 #include "board.h"
+#include "epd.h"
 #include "epd_display.h"
 #include "epd_panel.h"
 #include "log.h"
@@ -59,6 +60,7 @@ static const epd_panel_info_t *s_panel;
 static uint8_t s_size = EPD_BOARD_SIZE_2IN9;
 static uint32_t s_plane_size = EPD_PLANE_2IN9;
 static bool s_ready;
+static bool s_asleep;
 static bool s_busy_usable = true;
 static uint32_t s_spi_err_count;
 static atomic_t s_refreshing;
@@ -364,6 +366,7 @@ status_t epd_board_init(void)
 	uint32_t plane;
 
 	s_ready = false;
+	s_asleep = false;
 	s_spi_err_count = 0U;
 
 	s_size = nvs_epd_panel_get();
@@ -496,6 +499,12 @@ status_t epd_board_test_run(void)
 		}
 	}
 
+	st = epd_board_wake();
+	if (st != STATUS_OK) {
+		atomic_set(&s_refreshing, 0);
+		return st;
+	}
+
 	/* 单帧：白底 + 三色块 + 字符（只刷一次） */
 	LOG_INFO("epd: draw BWR demo (chars + black/red/white), one refresh");
 
@@ -579,10 +588,68 @@ status_t epd_board_refresh(void)
 		}
 	}
 
+	st = epd_board_wake();
+	if (st != STATUS_OK) {
+		atomic_set(&s_refreshing, 0);
+		return st;
+	}
+
 	LOG_INFO("epd: host buffer refresh");
 	st = epd_refresh_step("host", epd_display_refresh, EPD_COLOR_WHITE);
 	atomic_set(&s_refreshing, 0);
 	return st;
+}
+
+status_t epd_board_sleep(void)
+{
+	epd_status_t st;
+
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+	if (s_asleep) {
+		return STATUS_OK;
+	}
+	if (atomic_get(&s_refreshing) != 0) {
+		return STATUS_INVALID_STATE;
+	}
+
+	st = epd_sleep(&s_disp.epd);
+	if (st != EPD_OK) {
+		LOG_WARN("epd: sleep failed st=%d", (int)st);
+		return STATUS_FAIL;
+	}
+
+	s_asleep = true;
+	LOG_INFO("epd: panel sleep");
+	return STATUS_OK;
+}
+
+status_t epd_board_wake(void)
+{
+	epd_status_t st;
+
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+	if (!s_asleep) {
+		return STATUS_OK;
+	}
+
+	st = epd_init(&s_disp.epd);
+	if (st != EPD_OK) {
+		LOG_ERROR("epd: wake/init failed st=%d", (int)st);
+		return STATUS_FAIL;
+	}
+
+	s_asleep = false;
+	LOG_INFO("epd: panel wake");
+	return STATUS_OK;
+}
+
+bool epd_board_is_asleep(void)
+{
+	return s_asleep;
 }
 
 bool epd_board_is_ready(void)

@@ -151,17 +151,42 @@ function Invoke-West {
     }
 }
 
+function Get-ProjectCmakeExtraArgs {
+    # Optional projects/<name>/SNIPPET — one snippet name per line (e.g. nordic-flpr).
+    $argsList = @()
+    $snippetFile = Join-Path $AppDir "SNIPPET"
+    if (Test-Path $snippetFile) {
+        $names = @(
+            Get-Content -Path $snippetFile |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -ne "" -and -not $_.StartsWith("#") }
+        )
+        if ($names.Count -gt 0) {
+            $joined = $names -join ";"
+            $argsList += "-D${Project}_SNIPPET=$joined"
+        }
+    }
+    return $argsList
+}
+
 function Invoke-Build {
     if (-not (Test-Path $NcsRoot)) {
         Write-Error "NCS_ROOT not found: $NcsRoot  (run scripts\setup_env.ps1)"
     }
-    $westArgs = @(
-        "build",
-        "-b", $Board,
-        "-s", $AppDir,
-        "-d", $BuildDir
-    )
-    Invoke-West -WestArgs $westArgs
+    $westArgs = [System.Collections.Generic.List[string]]::new()
+    $westArgs.Add("build") | Out-Null
+    $westArgs.Add("-b") | Out-Null
+    $westArgs.Add($Board) | Out-Null
+    $westArgs.Add("-s") | Out-Null
+    $westArgs.Add($AppDir) | Out-Null
+    $westArgs.Add("-d") | Out-Null
+    $westArgs.Add($BuildDir) | Out-Null
+    $cmakeExtra = @(Get-ProjectCmakeExtraArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($cmakeExtra.Count -gt 0) {
+        $westArgs.Add("--") | Out-Null
+        foreach ($a in $cmakeExtra) { $westArgs.Add($a) | Out-Null }
+    }
+    Invoke-West -WestArgs $westArgs.ToArray()
 }
 
 function Normalize-ReleaseVersion {
@@ -199,15 +224,16 @@ function Invoke-Release {
         "CONFIG_APP_VERSION_STRING=`"$ver`""
     ) -join "`n" | Set-Content -Path $verConf -Encoding ascii
 
-    $westArgs = @(
-        "build",
-        "-b", $Board,
-        "-s", $AppDir,
-        "-d", $BuildDir,
-        "--",
-        "-DEXTRA_CONF_FILE=prj_release.conf;prj_version.conf"
-    )
-    Invoke-West -WestArgs $westArgs
+    $westArgs = [System.Collections.Generic.List[string]]::new()
+    [void]$westArgs.Add("build")
+    [void]$westArgs.Add("-b"); [void]$westArgs.Add($Board)
+    [void]$westArgs.Add("-s"); [void]$westArgs.Add($AppDir)
+    [void]$westArgs.Add("-d"); [void]$westArgs.Add($BuildDir)
+    [void]$westArgs.Add("--")
+    [void]$westArgs.Add("-DEXTRA_CONF_FILE=prj_release.conf;prj_version.conf")
+    $cmakeExtra = @(Get-ProjectCmakeExtraArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    foreach ($a in $cmakeExtra) { [void]$westArgs.Add($a) }
+    Invoke-West -WestArgs $westArgs.ToArray()
 
     $zephyrDir = Join-Path $BuildDir "$Project\zephyr"
     $elfSrc = Join-Path $zephyrDir "zephyr.elf"

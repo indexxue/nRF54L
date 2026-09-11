@@ -1,6 +1,6 @@
 /**
  * @file ble_gap.c
- * @brief 可连接广播 + 连接回调（断线后自动再广播）。
+ * @brief 可连接广播 + 连接回调；断线是否重广由 restart 开关控制。
  */
 
 #include "ble_gap.h"
@@ -23,6 +23,9 @@ static atomic_t s_advertising;
 static atomic_t s_connected;
 static atomic_t s_cnt_conn;
 static atomic_t s_cnt_disc;
+static atomic_t s_adv_slow;
+/** 默认 1：断线后 recycled 再广播（兼容常开广播产品）。 */
+static atomic_t s_restart_on_disc = ATOMIC_INIT(1);
 
 static const struct bt_data s_ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -32,9 +35,23 @@ static const struct bt_data s_ad[] = {
 status_t ble_gap_start_adv(void)
 {
 	int err;
+	bool slow = atomic_get(&s_adv_slow) != 0;
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, s_ad, ARRAY_SIZE(s_ad), NULL, 0);
-	if (err != 0) {
+	if (atomic_get(&s_connected) != 0) {
+		return STATUS_INVALID_STATE;
+	}
+	if (atomic_get(&s_advertising) != 0) {
+		return STATUS_OK;
+	}
+
+	if (slow) {
+		err = bt_le_adv_start(BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONN, BT_GAP_ADV_SLOW_INT_MIN,
+						      BT_GAP_ADV_SLOW_INT_MAX, NULL),
+				      s_ad, ARRAY_SIZE(s_ad), NULL, 0);
+	} else {
+		err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, s_ad, ARRAY_SIZE(s_ad), NULL, 0);
+	}
+	if ((err != 0) && (err != -EALREADY)) {
 		LOG_ERROR("ble_gap: adv_start %d", err);
 		atomic_set(&s_advertising, 0);
 		return STATUS_FAIL;
@@ -42,8 +59,48 @@ status_t ble_gap_start_adv(void)
 
 	atomic_set(&s_advertising, 1);
 	ble_evt_post(BLE_EVT_ADV_STARTED, 0U);
-	LOG_INFO("ble_gap: advertising as \"%s\"", DEVICE_NAME);
+	LOG_INFO("ble_gap: advertising as \"%s\" (%s)", DEVICE_NAME, slow ? "slow" : "fast");
 	return STATUS_OK;
+}
+
+void ble_gap_set_restart_on_disconnect(bool enable)
+{
+	atomic_set(&s_restart_on_disc, enable ? 1 : 0);
+	LOG_INFO("ble_gap: restart_on_disconnect=%d", enable ? 1 : 0);
+}
+
+bool ble_gap_get_restart_on_disconnect(void)
+{
+	return atomic_get(&s_restart_on_disc) != 0;
+}
+
+status_t ble_gap_set_adv_slow(bool slow)
+{
+	bool was = atomic_get(&s_adv_slow) != 0;
+
+	atomic_set(&s_adv_slow, slow ? 1 : 0);
+
+	if (was == slow) {
+		return STATUS_OK;
+	}
+
+	if (atomic_get(&s_connected) != 0) {
+		LOG_INFO("ble_gap: adv mode → %s (deferred, connected)", slow ? "slow" : "fast");
+		return STATUS_OK;
+	}
+
+	if (atomic_get(&s_advertising) != 0) {
+		(void)ble_gap_stop_adv();
+		return ble_gap_start_adv();
+	}
+
+	LOG_INFO("ble_gap: adv mode → %s (idle)", slow ? "slow" : "fast");
+	return STATUS_OK;
+}
+
+bool ble_gap_is_adv_slow(void)
+{
+	return atomic_get(&s_adv_slow) != 0;
 }
 
 status_t ble_gap_stop_adv(void)
@@ -98,6 +155,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 static void recycled(void)
 {
+	if (atomic_get(&s_restart_on_disc) == 0) {
+		LOG_INFO("ble_gap: recycled — no auto adv (button-wake mode)");
+		return;
+	}
 	(void)ble_gap_start_adv();
 }
 
