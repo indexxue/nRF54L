@@ -7,6 +7,7 @@
 
 #include "log.h"
 #include "fw_version.h"
+#include "nvs.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -389,6 +390,40 @@ static void cmd_version(int argc, const char *argv[])
     cmd_reply_ok("version", version_get_string());
 }
 
+static void cmd_sn(int argc, const char *argv[])
+{
+    char sn[NVS_SN_SIZE];
+
+    if (argc == 1)
+    {
+        if (!nvs_sn_get(sn))
+        {
+            cmd_reply_ng();
+            return;
+        }
+        cmd_reply_ok("sn", sn);
+        return;
+    }
+
+    if ((argc == 2) && (argv[1] != NULL) && (argv[1][0] != '\0'))
+    {
+        if (strlen(argv[1]) >= NVS_SN_SIZE)
+        {
+            cmd_reply_ng();
+            return;
+        }
+        if (!nvs_sn_set(argv[1]))
+        {
+            cmd_reply_ng();
+            return;
+        }
+        cmd_reply_ok("sn", argv[1]);
+        return;
+    }
+
+    cmd_reply_ng();
+}
+
 void cmd_set_project_register_fn(void (*fn)(void))
 {
     s_project_register_fn = fn;
@@ -410,5 +445,6 @@ void cmd_register_defaults(void)
     (void)cmd_register("reboot", cmd_reboot, "software reset");
     (void)cmd_register("log", cmd_log_test, "emit one log line + ok");
     (void)cmd_register("version", cmd_version, "app version string");
+    (void)cmd_register("sn", cmd_sn, "get/set SN: sn | sn <value>");
     cmd_invoke_project_register_once();
 }

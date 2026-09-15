@@ -181,11 +181,11 @@ function Invoke-Build {
     $westArgs.Add($AppDir) | Out-Null
     $westArgs.Add("-d") | Out-Null
     $westArgs.Add($BuildDir) | Out-Null
+    $westArgs.Add("--") | Out-Null
+    # Override stale release cmake cache (release sets CONFIG_APP_BUILD_RELEASE=y → LOG_* no-op).
+    $westArgs.Add("-DCONFIG_APP_BUILD_RELEASE=n") | Out-Null
     $cmakeExtra = @(Get-ProjectCmakeExtraArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($cmakeExtra.Count -gt 0) {
-        $westArgs.Add("--") | Out-Null
-        foreach ($a in $cmakeExtra) { $westArgs.Add($a) | Out-Null }
-    }
+    foreach ($a in $cmakeExtra) { $westArgs.Add($a) | Out-Null }
     Invoke-West -WestArgs $westArgs.ToArray()
 }
 

@@ -5,13 +5,21 @@
 
 #include "nvs.h"
 
+#include <stddef.h>
 #include <string.h>
 
+#include <zephyr/drivers/hwinfo.h>
 #include <zephyr/kernel.h>
+#include <zephyr/random/random.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/storage/flash_map.h>
 
-#include "fw_version.h"
+#include <pm_config.h>
+
+#include "boot_share.h"
+#include "crc32.h"
 #include "device_profile.h"
+#include "fw_version.h"
 #include "log.h"
 
 #ifndef NVS_FIRMWARE_BUILD_DATE
@@ -67,6 +75,8 @@ typedef struct {
 static nvs_cache_t s_cache;
 static bool s_ready;
 
+static bool nvs_boot_share_persist(uint8_t mode);
+
 static void nvs_cache_apply_defaults(void)
 {
 	static const uint8_t def_mac[NVS_MAC_SIZE] = NVS_DEFAULT_MAC;
@@ -74,10 +84,7 @@ static void nvs_cache_apply_defaults(void)
 	if (!s_cache.have_mac) {
 		memcpy(s_cache.mac, def_mac, NVS_MAC_SIZE);
 	}
-	if (!s_cache.have_sn) {
-		strncpy(s_cache.sn, NVS_DEFAULT_SN, NVS_SN_SIZE - 1U);
-		s_cache.sn[NVS_SN_SIZE - 1U] = '\0';
-	}
+	/* sn：无键时不在此填默认；nvs_init 末尾生成并落盘 */
 	if (!s_cache.have_dtype) {
 		s_cache.device_type = NVS_DEFAULT_DEVICE_TYPE;
 	}
@@ -198,6 +205,55 @@ static bool nvs_save_one(const char *key, const void *data, size_t len)
 	return true;
 }
 
+/** T90M + 8 hex；优先 CSPRNG，失败则 hwinfo⊕cycle */
+static bool nvs_sn_generate_and_persist(void)
+{
+	static const char hex[] = "0123456789ABCDEF";
+	uint8_t rnd[4];
+	char sn[NVS_SN_SIZE];
+	uint32_t mix;
+	ssize_t id_len;
+	uint8_t id[8];
+	int i;
+
+	BUILD_ASSERT((NVS_SN_PREFIX_LEN + NVS_SN_RAND_HEX_LEN + 1U) <= NVS_SN_SIZE,
+		     "SN prefix+rand must fit NVS_SN_SIZE");
+
+	if (sys_csrand_get(rnd, sizeof(rnd)) != 0) {
+		mix = k_cycle_get_32();
+		memset(id, 0, sizeof(id));
+		id_len = hwinfo_get_device_id(id, sizeof(id));
+		for (i = 0; i < (int)sizeof(rnd); i++) {
+			uint8_t b = (uint8_t)(mix >> (8 * i));
+
+			if ((id_len > 0) && (i < (int)id_len)) {
+				b ^= id[i];
+			}
+			rnd[i] = b;
+		}
+		LOG_WARN("nvs: csrand fail, SN from hwinfo/cycle");
+	}
+
+	memcpy(sn, NVS_SN_PREFIX, NVS_SN_PREFIX_LEN);
+	for (i = 0; i < 4; i++) {
+		sn[NVS_SN_PREFIX_LEN + (i * 2)] = hex[(rnd[i] >> 4) & 0x0FU];
+		sn[NVS_SN_PREFIX_LEN + (i * 2) + 1] = hex[rnd[i] & 0x0FU];
+	}
+	sn[NVS_SN_PREFIX_LEN + NVS_SN_RAND_HEX_LEN] = '\0';
+
+	strncpy(s_cache.sn, sn, NVS_SN_SIZE - 1U);
+	s_cache.sn[NVS_SN_SIZE - 1U] = '\0';
+	s_cache.have_sn = 1U;
+
+	if (!nvs_save_one(NVS_KEY_SN, s_cache.sn, strlen(s_cache.sn) + 1U)) {
+		LOG_WARN("nvs: SN generate ok in RAM, save failed sn=%s", s_cache.sn);
+		return false;
+	}
+
+	LOG_INFO("nvs: first-boot SN generated sn=%s", s_cache.sn);
+	return true;
+}
+
 void nvs_init(void)
 {
 	int rc;
@@ -213,6 +269,9 @@ void nvs_init(void)
 		LOG_ERROR("settings_subsys_init rc=%d", rc);
 		nvs_cache_apply_defaults();
 		s_ready = true;
+		if (!s_cache.have_sn) {
+			(void)nvs_sn_generate_and_persist();
+		}
 		nvs_log_boot_dump();
 		return;
 	}
@@ -224,6 +283,14 @@ void nvs_init(void)
 
 	nvs_cache_apply_defaults();
 	s_ready = true;
+
+	if (!s_cache.have_sn) {
+		if (!nvs_sn_generate_and_persist()) {
+			strncpy(s_cache.sn, NVS_DEFAULT_SN, NVS_SN_SIZE - 1U);
+			s_cache.sn[NVS_SN_SIZE - 1U] = '\0';
+			s_cache.have_sn = 1U;
+		}
+	}
 
 	nvs_log_boot_dump();
 }
@@ -282,24 +349,30 @@ void nvs_factory_reset(void)
 	}
 
 	memcpy(s_cache.mac, def_mac, NVS_MAC_SIZE);
-	strncpy(s_cache.sn, NVS_DEFAULT_SN, NVS_SN_SIZE - 1U);
-	s_cache.sn[NVS_SN_SIZE - 1U] = '\0';
 	s_cache.device_type = NVS_DEFAULT_DEVICE_TYPE;
 	s_cache.device_id = NVS_DEVICE_ID_DEFAULT;
 	s_cache.hardware_id = NVS_DEFAULT_HARDWARE_ID;
 	s_cache.boot_mode = NVS_BOOT_MODE_APP;
 	s_cache.epd_panel = NVS_EPD_PANEL_2IN9;
-	s_cache.have_mac = s_cache.have_sn = s_cache.have_dtype = 1U;
+	s_cache.have_mac = s_cache.have_dtype = 1U;
 	s_cache.have_did = s_cache.have_hid = s_cache.have_bmode = 1U;
 	s_cache.have_epanel = 1U;
+	s_cache.have_sn = 0U;
 
 	(void)nvs_save_one(NVS_KEY_MAC, s_cache.mac, NVS_MAC_SIZE);
-	(void)nvs_save_one(NVS_KEY_SN, s_cache.sn, strlen(s_cache.sn) + 1U);
 	(void)nvs_save_one(NVS_KEY_DEVICE_TYPE, &s_cache.device_type, sizeof(s_cache.device_type));
 	(void)nvs_save_one(NVS_KEY_DEVICE_ID, &s_cache.device_id, sizeof(s_cache.device_id));
 	(void)nvs_save_one(NVS_KEY_HARDWARE_ID, &s_cache.hardware_id, sizeof(s_cache.hardware_id));
 	(void)nvs_save_one(NVS_KEY_BOOT_MODE, &s_cache.boot_mode, sizeof(s_cache.boot_mode));
 	(void)nvs_save_one(NVS_KEY_EPD_PANEL, &s_cache.epd_panel, sizeof(s_cache.epd_panel));
+	(void)nvs_boot_share_persist(s_cache.boot_mode);
+
+	if (!nvs_sn_generate_and_persist()) {
+		strncpy(s_cache.sn, NVS_DEFAULT_SN, NVS_SN_SIZE - 1U);
+		s_cache.sn[NVS_SN_SIZE - 1U] = '\0';
+		s_cache.have_sn = 1U;
+		(void)nvs_save_one(NVS_KEY_SN, s_cache.sn, strlen(s_cache.sn) + 1U);
+	}
 
 	LOG_INFO("nvs factory_reset done");
 }
@@ -331,16 +404,22 @@ bool nvs_mac_get(uint8_t *mac)
 
 bool nvs_sn_set(const char *sn)
 {
+	size_t len;
+
 	if ((sn == NULL) || (sn[0] == '\0')) {
+		return false;
+	}
+	len = strlen(sn);
+	if (len >= NVS_SN_SIZE) {
 		return false;
 	}
 	if (!s_ready) {
 		nvs_init();
 	}
-	strncpy(s_cache.sn, sn, NVS_SN_SIZE - 1U);
-	s_cache.sn[NVS_SN_SIZE - 1U] = '\0';
+	memcpy(s_cache.sn, sn, len);
+	s_cache.sn[len] = '\0';
 	s_cache.have_sn = 1U;
-	return nvs_save_one(NVS_KEY_SN, s_cache.sn, strlen(s_cache.sn) + 1U);
+	return nvs_save_one(NVS_KEY_SN, s_cache.sn, len + 1U);
 }
 
 bool nvs_sn_get(char *sn)
@@ -475,8 +554,55 @@ bool nvs_build_date_format(uint32_t ymd, char *out, size_t out_cap)
 	return true;
 }
 
+/**
+ * Dual-write boot_mode into boot_share page (MCUBoot reads this; no Settings parse).
+ * No-op (success) when partition absent (pre-MCUBoot apps).
+ */
+static bool nvs_boot_share_persist(uint8_t mode)
+{
+#ifdef PM_BOOT_SHARE_ID
+	const struct flash_area *fa;
+	struct boot_share_record rec;
+	int rc;
+
+	memset(&rec, 0, sizeof(rec));
+	rec.magic = BOOT_SHARE_MAGIC;
+	rec.version = BOOT_SHARE_VERSION;
+	rec.boot_mode = mode;
+	rec.crc32 = crc32_compute((const uint8_t *)&rec,
+				  offsetof(struct boot_share_record, crc32));
+
+	rc = flash_area_open(PM_BOOT_SHARE_ID, &fa);
+	if (rc != 0) {
+		LOG_ERROR("boot_share open fail %d", rc);
+		return false;
+	}
+
+	rc = flash_area_flatten(fa, 0, fa->fa_size);
+	if (rc != 0) {
+		LOG_ERROR("boot_share flatten fail %d", rc);
+		flash_area_close(fa);
+		return false;
+	}
+
+	rc = flash_area_write(fa, 0, &rec, sizeof(rec));
+	flash_area_close(fa);
+	if (rc != 0) {
+		LOG_ERROR("boot_share write fail %d", rc);
+		return false;
+	}
+
+	return true;
+#else
+	ARG_UNUSED(mode);
+	return true;
+#endif
+}
+
 bool nvs_boot_mode_set(uint8_t mode)
 {
+	bool ok;
+
 	if ((mode != NVS_BOOT_MODE_APP) && (mode != NVS_BOOT_MODE_FACTORY)) {
 		return false;
 	}
@@ -485,7 +611,15 @@ bool nvs_boot_mode_set(uint8_t mode)
 	}
 	s_cache.boot_mode = mode;
 	s_cache.have_bmode = 1U;
-	return nvs_save_one(NVS_KEY_BOOT_MODE, &s_cache.boot_mode, sizeof(s_cache.boot_mode));
+	ok = nvs_save_one(NVS_KEY_BOOT_MODE, &s_cache.boot_mode, sizeof(s_cache.boot_mode));
+	if (!ok) {
+		return false;
+	}
+	if (!nvs_boot_share_persist(mode)) {
+		LOG_ERROR("boot_mode Settings ok but boot_share failed");
+		return false;
+	}
+	return true;
 }
 
 uint8_t nvs_boot_mode_get(void)

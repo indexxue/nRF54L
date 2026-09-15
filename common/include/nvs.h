@@ -72,7 +72,12 @@ extern "C" {
 
 #define NVS_DEFAULT_MAC \
 	{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 }
-#define NVS_DEFAULT_SN "T90M0123456789"
+/** 首启无 Settings 时：前缀 + 8 hex 随机（共 12 字符），写入后不再改 */
+#define NVS_SN_PREFIX "T90M"
+#define NVS_SN_PREFIX_LEN 4
+#define NVS_SN_RAND_HEX_LEN 8
+/** 仅生成失败时的内存兜底；正常路径会落盘随机 SN */
+#define NVS_DEFAULT_SN NVS_SN_PREFIX "00000000"
 #define NVS_HW_VERSION_STRING "1.0.0"
 #define NVS_DEFAULT_DEVICE_TYPE 1
 
@@ -82,7 +87,7 @@ extern "C" {
 
 #define NVS_BUILD_DATE_SIZE 9
 
-/** boot_mode（E1 厂测入口）；Boot 将来读此键 */
+/** boot_mode（E1 厂测入口）；双写 Settings + boot_share，Boot 读旁路页 */
 #define NVS_BOOT_MODE_APP     0U
 #define NVS_BOOT_MODE_FACTORY 1U
 

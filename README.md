@@ -24,6 +24,7 @@
 ```
 nRF54L15/
 ├── projects/           # 应用工程（demo、factory、…）
+├── bootloader/         # 共享 MCUBoot 配置（sysbuild 子镜像，非独立工程）
 ├── start/              # 公共 main / start_boot / start_poll
 ├── common/             # 多工程共享 C 源码
 ├── ble/                # BLE 协议层（CMD 线程 / GAP / GATT）
@@ -41,6 +42,7 @@ nRF54L15/
 | 代码放哪里 | 路径 |
 |------------|------|
 | 公共起机 / `main` | `start/`（`modules/nrf54_start`） |
+| MCUBoot 共享配置 | `bootloader/`（各 APP sysbuild 引用） |
 | 多工程复用库 | `common/` |
 | BLE 协议 / 标定 CMD | `ble/`（`modules/nrf54_ble`） |
 | 仅某一工程 | `projects/<name>/src` + `lib/<module>/` |
@@ -102,9 +104,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\new_project.ps1 -Name myapp
 | mcuboot | 64 KB | Bootloader |
 | image-0 | 664 KB | 量产 APP |
 | image-1 | 664 KB | OTA 暂存 ∪ 厂测 |
-| storage | 36 KB | Settings / NVS（含 `boot_mode`） |
+| settings_storage | 32 KB | Settings / NVS |
+| boot_share | 4 KB | Boot ↔ APP 旁路（`boot_mode` 等） |
 
-当前构建为**预 MCUBoot** 单镜像（`pm_static.yml`：`app` + `settings_storage`）。完整双槽表与写权限约定见 [`doc/flash_layout.md`](doc/flash_layout.md)。
+`storage` 合计仍为 36 KB（Settings 32 + 末页 `boot_share` 4）。**`factory` 已启用 MCUBoot**（双槽 + `merged.hex`）；`demo` / `eink_tag` 仍为预 MCUBoot 单镜像。共享配置见 [`bootloader/`](bootloader/)；约定见 [`doc/flash_layout.md`](doc/flash_layout.md)。
 
 ## 与 STM32 习惯的差异
 

@@ -3,8 +3,11 @@
 config NRF54_COMMON
 	bool
 	default y
+	select ENTROPY_GENERATOR
+	select HWINFO
 	help
 	  Shared application helpers from repo common/ for projects under this repo.
+	  ENTROPY/HWINFO：首启生成 SN（固定前缀 + 随机）。
 
 config APP_BUILD_RELEASE
 	bool "Release build: empty common/log.c output"
