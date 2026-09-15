@@ -1,13 +1,11 @@
-# Canonical dual-slot Partition Manager map for MCUBoot (cpuapp RRAM).
-# Addresses match doc/flash_layout.md. Apps copy/replace their pm_static.yml
-# when enabling SB_CONFIG_BOOTLOADER_MCUBOOT -- do not use while still pre-MCUBoot.
+# Dual-slot MCUBoot map for factory Direct XIP (secondary-linked variant).
+# Addresses match doc/flash_layout.md / bootloader/pm_static.yml.
 #
 # mcuboot             64 KiB @ 0x000000
 # slot0 (primary)    664 KiB @ 0x010000  (pad 0x800 + app)
-# slot1 (secondary)  664 KiB @ 0x0B6000
+# slot1 (secondary)  664 KiB @ 0x0B6000  (pad 0x800 + secondary_app) <- flash target
 # settings_storage    32 KiB @ 0x15C000
 # boot_share           4 KiB @ 0x164000
-# FLPR reserved from 0x165000 (not listed; sysbuild CPUFLPR domain owns it)
 
 mcuboot:
   address: 0x0
@@ -43,8 +41,22 @@ mcuboot_primary_app:
 
 mcuboot_secondary:
   address: 0xb6000
+  orig_span: &id003
+  - mcuboot_secondary_pad
+  - mcuboot_secondary_app
   region: flash_primary
   size: 0xa6000
+  span: *id003
+
+mcuboot_secondary_pad:
+  address: 0xb6000
+  region: flash_primary
+  size: 0x800
+
+mcuboot_secondary_app:
+  address: 0xb6800
+  region: flash_primary
+  size: 0xa5800
 
 settings_storage:
   address: 0x15c000

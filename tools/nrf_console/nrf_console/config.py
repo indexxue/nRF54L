@@ -9,9 +9,30 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Legacy defaults（旧固件 / 无 sn 时）；现网 UUID 前缀 = FNV-1a32(sn)
 DEFAULT_SVC_UUID = "53530120-0001-1000-8000-00805f9b34fb"
 DEFAULT_RX_UUID = "53530120-0002-1000-8000-00805f9b34fb"
 DEFAULT_TX_UUID = "53530120-0003-1000-8000-00805f9b34fb"
+
+_UUID_TAIL = "1000-8000-00805f9b34fb"
+_UUID_PREFIX_FALLBACK = 0x53530120
+
+
+def sn_fnv1a32(sn: str) -> int:
+    """Match ble/src/ble_gatt.c ble_gatt_sn_hash32."""
+    h = 2166136261
+    for b in sn.encode("ascii", errors="strict"):
+        h ^= b
+        h = (h * 16777619) & 0xFFFFFFFF
+    return h if h else _UUID_PREFIX_FALLBACK
+
+
+def uuids_from_sn(sn: str) -> tuple[str, str, str]:
+    prefix = f"{sn_fnv1a32(sn):08x}"
+    svc = f"{prefix}-0001-{_UUID_TAIL}"
+    rx = f"{prefix}-0002-{_UUID_TAIL}"
+    tx = f"{prefix}-0003-{_UUID_TAIL}"
+    return svc, rx, tx
 
 
 @dataclass
@@ -37,6 +58,9 @@ class AppConfig:
             {"name": "PING", "cmd_id": 1001, "payload_hex": ""},
             {"name": "DISPLAY", "cmd_id": 2001, "payload_hex": ""},
         ]
+
+    def apply_sn(self, sn: str) -> None:
+        self.svc_uuid, self.rx_uuid, self.tx_uuid = uuids_from_sn(sn)
 
 
 def default_config_path() -> Path:

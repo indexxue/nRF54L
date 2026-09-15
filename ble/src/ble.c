@@ -28,6 +28,12 @@ status_t ble_init(void)
 		return st;
 	}
 
+	/* UUID 由 sn 派生，须在 bt_enable 前写入静态 GATT 表 */
+	st = ble_gatt_prepare();
+	if (st != STATUS_OK) {
+		return st;
+	}
+
 	st = ble_stack_init();
 	if (st != STATUS_OK) {
 		return st;

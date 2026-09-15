@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * boot_go_hook: if boot_share.boot_mode == factory, boot mcuboot_secondary
- * (no swap). Otherwise return FIH_BOOT_HOOK_REGULAR for normal MCUBoot.
+ * (no swap). Factory image must be Direct-XIP / secondary-linked (see factory
+ * SB_CONFIG_MCUBOOT_MODE_DIRECT_XIP + mcuboot_secondary_app).
  */
 
 #include <stddef.h>

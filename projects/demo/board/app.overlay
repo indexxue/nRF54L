@@ -3,6 +3,7 @@
  *
  * UART20 console: TX=P1.09  RX=P1.10  @ 115200
  * LED0=P1.04  LED1=P1.05  (GPIO_ACTIVE_LOW；若常亮/不亮可改 ACTIVE_HIGH)
+ * FTM 按键：P0.00 ACTIVE_LOW + PULL_UP（BTN_PERMISSION_FTM）
  * LFCLK: 工程 prj.conf 使用 RC（内部），不依赖外部 32k 晶振
  * HF: 无 BLE 时走内部 HFINT，不强制起 HFXO
  */
@@ -68,4 +69,15 @@
 
 &led3 {
 	status = "disabled";
+};
+
+/* FTM 跳槽：P0.00 低有效，内部上拉 */
+&gpio0 {
+	status = "okay";
+};
+
+/ {
+	zephyr,user {
+		btn-ftm-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	};
 };

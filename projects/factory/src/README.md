@@ -4,7 +4,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `app.c` | `app_init()`（`cmd`）+ `app_run()`；循环里调 `start_poll()` |
+| `app.c` | `app_init()`（`cmd` + 按 did 的 `factory_hw_init`）+ `app_run()`；FTM 跳槽在 common |
 
 ## 启动顺序
 

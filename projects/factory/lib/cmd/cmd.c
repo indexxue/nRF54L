@@ -13,9 +13,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <zephyr/console/console.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
+
+#define CMD_RX_STACK_SIZE 1024
+#define CMD_RX_PRIORITY   5
 
 static cmd_write_fn s_write_fn;
 static void *s_write_ctx;
@@ -28,6 +32,10 @@ static bool s_project_register_done;
 
 static char s_line_buf[CMD_LINE_MAX];
 static size_t s_line_len;
+
+static K_THREAD_STACK_DEFINE(s_cmd_rx_stack, CMD_RX_STACK_SIZE);
+static struct k_thread s_cmd_rx_thread;
+static bool s_cmd_rx_started;
 
 static bool cmd_write_printk(const void *data, size_t len, void *user_ctx)
 {
@@ -366,6 +374,42 @@ void cmd_feed_char(char ch)
     }
 }
 
+void cmd_poll(void)
+{
+	/* RX is handled by cmd_rx_thread (console_getchar). Kept for API compat. */
+}
+
+static void cmd_rx_thread_fn(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	(void)console_init();
+
+	while (1) {
+		int ch = console_getchar();
+
+		if (ch < 0) {
+			continue;
+		}
+		cmd_feed_char((char)ch);
+	}
+}
+
+static void cmd_rx_start(void)
+{
+	if (s_cmd_rx_started) {
+		return;
+	}
+
+	(void)k_thread_create(&s_cmd_rx_thread, s_cmd_rx_stack,
+			      K_THREAD_STACK_SIZEOF(s_cmd_rx_stack), cmd_rx_thread_fn,
+			      NULL, NULL, NULL, CMD_RX_PRIORITY, 0, K_NO_WAIT);
+	(void)k_thread_name_set(&s_cmd_rx_thread, "cmd_rx");
+	s_cmd_rx_started = true;
+}
+
 static void cmd_reboot(int argc, const char *argv[])
 {
     (void)argc;
@@ -424,6 +468,22 @@ static void cmd_sn(int argc, const char *argv[])
     cmd_reply_ng();
 }
 
+static void cmd_ftmexit(int argc, const char *argv[])
+{
+    (void)argc;
+    (void)argv;
+
+    /* Clear factory bypass so MCUBoot chainloads image-0 (slot0 / PART_APP_A). */
+    if (!nvs_boot_mode_set(NVS_BOOT_MODE_APP)) {
+        cmd_reply_ng();
+        return;
+    }
+
+    cmd_reply_ok("ftmexit", "reboot");
+    k_msleep(50);
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
 void cmd_set_project_register_fn(void (*fn)(void))
 {
     s_project_register_fn = fn;
@@ -446,5 +506,8 @@ void cmd_register_defaults(void)
     (void)cmd_register("log", cmd_log_test, "emit one log line + ok");
     (void)cmd_register("version", cmd_version, "app version string");
     (void)cmd_register("sn", cmd_sn, "get/set SN: sn | sn <value>");
+    (void)cmd_register("ftmexit", cmd_ftmexit,
+                       "exit factory: boot_mode=app + reboot -> image-0");
     cmd_invoke_project_register_once();
+    cmd_rx_start();
 }

@@ -9,22 +9,24 @@ Behavior contract: [`doc/flash_layout.md`](../doc/flash_layout.md).
 
 | Path | Role |
 |------|------|
-| `prj.conf` | Shared MCUBoot Kconfig (64 KB boot, swap move, unsigned for development, `BOOT_GO_HOOKS`) |
+| `prj.conf` | Shared MCUBoot Kconfig (64 KB boot, unsigned, `BOOT_GO_HOOKS`) |
+| `prj_swap_move.conf` | Swap-move mode（demo / 量产 APP） |
+| `prj_direct_xip.conf` | Direct XIP mode（factory 编 secondary 变体） |
 | `boards/nrf54l15dk_nrf54l15_cpuapp.conf` | DK cpuapp board fragment (LFCLK RC, no GRTC) |
 | `boards/nrf54l15dk_nrf54l15_cpuapp.overlay` | UART20 TX=P1.09 RX=P1.10 (same as apps) |
-| `pm_static.yml` | Canonical dual-slot + `settings_storage` 32 KB + `boot_share` 4 KB |
+| `pm_static.yml` | Dual-slot + secondary_app span + `settings` + `boot_share` |
 | `include/boot_share.h` | Bypass page address / magic / `boot_mode` record |
 | `hooks/` | Zephyr module: `boot_go_hook` + `cleanup_compat` stub |
-| `sysbuild_include.cmake` | One-line include from an app `sysbuild.cmake` |
+| `sysbuild_include.cmake` | Include from app `sysbuild.cmake`；`NRF54_MCUBOOT_MODE_CONF` 选 swap/xip |
 
 ## This stage vs next
 
 | Done now | Not yet |
 |----------|---------|
-| Directory + shared fragments | BLE OTA write path / confirm API |
-| Dual-slot `pm_static.yml` | `demo` / `eink_tag` MCUBoot |
-| `boot_share.h` + APP dual-write (`nvs_boot_mode_set`) | Delayed confirm helper |
-| **`factory` MCUBoot chainload** (Boot → slot0) verified on TY UART | Board smoke of factory → secondary bypass |
+| Directory + shared fragments | BLE OTA write / delayed confirm |
+| Dual-slot `pm_static.yml`（含 secondary_app） | `eink_tag` MCUBoot |
+| `boot_share` + `boot_go_hook` | — |
+| **`demo` swap-move Boot** + **`factory` Direct XIP secondary** | 板上 factory→secondary 勾验收 |
 
 ## How an app opts in
 
@@ -36,9 +38,11 @@ Behavior contract: [`doc/flash_layout.md`](../doc/flash_layout.md).
 
 ```powershell
 .\nrf.cmd -Project factory fullclean
-.\nrf.cmd -Project factory build
+.\nrf.cmd -Project factory build-all
 .\nrf.cmd -Project factory flash
 ```
+
+`factory flash` programs **slot1 only** with **Direct-XIP secondary** (`mcuboot_secondary_app`). For Boot + slot0 use the production app (`demo flash`).
 
 ## Notes
 
@@ -46,4 +50,4 @@ Behavior contract: [`doc/flash_layout.md`](../doc/flash_layout.md).
 - TY rev_a has **no LFXO**: force `CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC=y` (DK default XTAL hangs before UART).
 - **No GRTC / no MULTITHREADING in MCUBoot** on this board: with GRTC enabled, Boot could print `Jumping` then hang in `sys_clock_elapsed` and never chainload.
 - `CONFIG_MCUBOOT_NRF_CLEANUP_PERIPHERAL=n` + `hooks/cleanup_compat.c` avoids UARTE teardown before jump (and satisfies `nrf_crypto_keys_housekeeping` link).
-- `boot_share` factory→secondary path is implemented in `boot_go_hook`; board flag smoke is next.
+- `boot_share` factory→secondary：`boot_go_hook`；factory 须烧 Direct-XIP secondary 变体。

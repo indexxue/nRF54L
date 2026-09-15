@@ -8,14 +8,18 @@
 #include <string.h>
 
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
 #include "board.h"
 #include "event.h"
 #include "flexible_button.h"
 #include "log.h"
+#include "nvs.h"
 
 #define BUTTON_MAX_NUM 8U
+#define BUTTON_FTM_SEQ_TIMEOUT_MS 8000
 
 typedef struct
 {
@@ -43,6 +47,10 @@ static button_item_t self;
 
 static btn_id_e last_button_id = BTN_ID_MAX_NUMBER;
 static btn_event_e last_button_event = BTN_EVENT_NONE;
+static uint8_t last_button_clicks;
+static uint16_t last_button_permission;
+static uint8_t s_ftm_expect = 5U;
+static int64_t s_ftm_deadline_ms;
 
 static uint8_t button_flex_read(void *flex)
 {
@@ -106,6 +114,16 @@ static void button_flex_event_callback(void *arg)
 
 	last_button_id = list->id;
 	last_button_event = bevt;
+	last_button_permission = list->permission;
+	if (flex->click_cnt > 0U) {
+		last_button_clicks = (uint8_t)flex->click_cnt;
+	} else if (bevt == BTN_EVENT_SINGLE_CLICK) {
+		last_button_clicks = 1U;
+	} else if (bevt == BTN_EVENT_DOUBLE_CLICK) {
+		last_button_clicks = 2U;
+	} else {
+		last_button_clicks = 0U;
+	}
 	event_set(EVT_ID_BUTTON);
 
 	if (self.notify != NULL)
@@ -186,6 +204,10 @@ status_t button_init(btn_notify_t notify)
 	self.notify = notify;
 	last_button_id = BTN_ID_MAX_NUMBER;
 	last_button_event = BTN_EVENT_NONE;
+	last_button_clicks = 0U;
+	last_button_permission = 0U;
+	s_ftm_expect = 5U;
+	s_ftm_deadline_ms = 0;
 
 	if (!board_wants(BOARD_MASK_BUTTON))
 	{
@@ -207,6 +229,10 @@ void button_deinit(void)
 	memset(&self, 0, sizeof(button_item_t));
 	last_button_id = BTN_ID_MAX_NUMBER;
 	last_button_event = BTN_EVENT_NONE;
+	last_button_clicks = 0U;
+	last_button_permission = 0U;
+	s_ftm_expect = 5U;
+	s_ftm_deadline_ms = 0;
 }
 
 void button_schedule(void)
@@ -216,6 +242,91 @@ void button_schedule(void)
 		return;
 	}
 	(void)flex_button_scan();
+}
+
+static void button_ftm_seq_reset(const char *why)
+{
+	if (s_ftm_expect != 5U) {
+		LOG_INFO("ftm seq reset expect=%u (%s)", (unsigned)s_ftm_expect,
+			 why != NULL ? why : "");
+	}
+	s_ftm_expect = 5U;
+	s_ftm_deadline_ms = 0;
+}
+
+static void button_ftm_boot_jump(void)
+{
+	uint8_t cur = nvs_boot_mode_get();
+	uint8_t next = (cur == NVS_BOOT_MODE_FACTORY) ? NVS_BOOT_MODE_APP
+						     : NVS_BOOT_MODE_FACTORY;
+
+	if (!nvs_boot_mode_set(next)) {
+		LOG_ERROR("ftm jump: nvs_boot_mode_set(%u) failed", (unsigned)next);
+		return;
+	}
+	LOG_INFO("ftm jump: boot_mode %u → %u reboot (slot1 kept)", (unsigned)cur,
+		 (unsigned)next);
+	k_msleep(50);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
+void button_ftm_seq_poll(void)
+{
+	btn_id_e id;
+	btn_event_e ev;
+	uint8_t clicks;
+	int64_t now;
+
+	if (!event_is_set(EVT_ID_BUTTON)) {
+		return;
+	}
+	if ((button_last_permission_get() & (uint16_t)BTN_PERMISSION_FTM) == 0U) {
+		return;
+	}
+
+	button_last_event_get(&id, &ev);
+	clicks = button_last_click_count_get();
+	button_last_event_clear();
+	(void)id;
+
+	if ((ev != BTN_EVENT_SINGLE_CLICK) && (ev != BTN_EVENT_DOUBLE_CLICK) &&
+	    (ev != BTN_EVENT_REPEAT_CLICK)) {
+		return;
+	}
+
+	now = k_uptime_get();
+	if ((s_ftm_expect != 5U) && (s_ftm_deadline_ms != 0) && (now > s_ftm_deadline_ms)) {
+		button_ftm_seq_reset("timeout");
+	}
+
+	if (clicks == 5U) {
+		s_ftm_expect = 4U;
+		s_ftm_deadline_ms = now + BUTTON_FTM_SEQ_TIMEOUT_MS;
+		LOG_INFO("ftm seq: 5 ok → next 4");
+		return;
+	}
+
+	if (clicks != s_ftm_expect) {
+		button_ftm_seq_reset("wrong count");
+		return;
+	}
+
+	if (s_ftm_expect == 4U) {
+		s_ftm_expect = 3U;
+		s_ftm_deadline_ms = now + BUTTON_FTM_SEQ_TIMEOUT_MS;
+		LOG_INFO("ftm seq: 4 ok → next 3");
+		return;
+	}
+	if (s_ftm_expect == 3U) {
+		s_ftm_expect = 2U;
+		s_ftm_deadline_ms = now + BUTTON_FTM_SEQ_TIMEOUT_MS;
+		LOG_INFO("ftm seq: 3 ok → next 2");
+		return;
+	}
+
+	LOG_INFO("ftm seq: 2 ok");
+	button_ftm_seq_reset(NULL);
+	button_ftm_boot_jump();
 }
 
 static void button_wake_isr(const struct device *port, struct gpio_callback *cb, uint32_t pins)
@@ -314,10 +425,22 @@ void button_last_event_get(btn_id_e *id, btn_event_e *event)
 	}
 }
 
+uint8_t button_last_click_count_get(void)
+{
+	return last_button_clicks;
+}
+
+uint16_t button_last_permission_get(void)
+{
+	return last_button_permission;
+}
+
 void button_last_event_clear(void)
 {
 	last_button_id = BTN_ID_MAX_NUMBER;
 	last_button_event = BTN_EVENT_NONE;
+	last_button_clicks = 0U;
+	last_button_permission = 0U;
 	event_clear(EVT_ID_BUTTON);
 }
 
@@ -388,8 +511,9 @@ void button_log_notify(btn_id_e id, const char *name, btn_permission_e permissio
 	    event == BTN_EVENT_REPEAT_CLICK || event == BTN_EVENT_LONG_PRESS ||
 	    event == BTN_EVENT_LONG_HOLD || event == BTN_EVENT_LONG_HOLD_UP)
 	{
-		LOG_INFO("button id=%d(%s) name=%s event=%s", (int)id, button_id_to_str(id),
-			 name != NULL ? name : "NULL", button_event_to_str(event));
+		LOG_INFO("button id=%d(%s) name=%s event=%s clicks=%u", (int)id, button_id_to_str(id),
+			 name != NULL ? name : "NULL", button_event_to_str(event),
+			 (unsigned)last_button_clicks);
 	}
 }
 

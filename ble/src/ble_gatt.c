@@ -1,6 +1,8 @@
 /**
  * @file ble_gatt.c
  * @brief GATT RX Write → ble_cmd_ingress；TX Notify ← ble_gatt_notify。
+ *
+ * Service/RX/TX 128-bit UUID 前 32 bit = FNV-1a(sn)；须在 bt_enable 前 prepare。
  */
 
 #include "ble_gatt.h"
@@ -16,20 +18,62 @@
 
 #include "ble_cmd.h"
 #include "log.h"
+#include "nvs.h"
 
-#define BT_UUID_EINK_SVC_VAL \
-	BT_UUID_128_ENCODE(0x53530120, 0x0001, 0x1000, 0x8000, 0x00805f9b34fb)
-#define BT_UUID_EINK_RX_VAL \
-	BT_UUID_128_ENCODE(0x53530120, 0x0002, 0x1000, 0x8000, 0x00805f9b34fb)
-#define BT_UUID_EINK_TX_VAL \
-	BT_UUID_128_ENCODE(0x53530120, 0x0003, 0x1000, 0x8000, 0x00805f9b34fb)
+#define BLE_UUID_SHORT_SVC 0x0001U
+#define BLE_UUID_SHORT_RX 0x0002U
+#define BLE_UUID_SHORT_TX 0x0003U
+/** hash 为 0 时回退（与历史 eink_tag product_id 一致） */
+#define BLE_UUID_PREFIX_FALLBACK 0x53530120U
 
-static const struct bt_uuid_128 s_svc_uuid = BT_UUID_INIT_128(BT_UUID_EINK_SVC_VAL);
-static const struct bt_uuid_128 s_rx_uuid = BT_UUID_INIT_128(BT_UUID_EINK_RX_VAL);
-static const struct bt_uuid_128 s_tx_uuid = BT_UUID_INIT_128(BT_UUID_EINK_TX_VAL);
+static struct bt_uuid_128 s_svc_uuid;
+static struct bt_uuid_128 s_rx_uuid;
+static struct bt_uuid_128 s_tx_uuid;
 
 static struct bt_conn *s_conn;
 static atomic_t s_notify_enabled;
+static bool s_uuid_ready;
+
+/** FNV-1a 32 — 与 tools/nrf_console sn→UUID 算法一致 */
+static uint32_t ble_gatt_sn_hash32(const char *sn)
+{
+	uint32_t h = 2166136261U;
+
+	if (sn == NULL) {
+		return BLE_UUID_PREFIX_FALLBACK;
+	}
+
+	for (; *sn != '\0'; sn++) {
+		h ^= (uint32_t)(uint8_t)*sn;
+		h *= 16777619U;
+	}
+
+	return (h != 0U) ? h : BLE_UUID_PREFIX_FALLBACK;
+}
+
+static void ble_gatt_set_uuid128(struct bt_uuid_128 *out, uint32_t prefix, uint16_t short_id)
+{
+	*out = (struct bt_uuid_128)BT_UUID_INIT_128(
+		BT_UUID_128_ENCODE(prefix, short_id, 0x1000, 0x8000, 0x00805f9b34fb));
+}
+
+status_t ble_gatt_prepare(void)
+{
+	char sn[NVS_SN_SIZE];
+	uint32_t prefix;
+
+	(void)nvs_sn_get(sn);
+	prefix = ble_gatt_sn_hash32(sn);
+
+	ble_gatt_set_uuid128(&s_svc_uuid, prefix, BLE_UUID_SHORT_SVC);
+	ble_gatt_set_uuid128(&s_rx_uuid, prefix, BLE_UUID_SHORT_RX);
+	ble_gatt_set_uuid128(&s_tx_uuid, prefix, BLE_UUID_SHORT_TX);
+	s_uuid_ready = true;
+
+	LOG_INFO("ble_gatt: sn=%s uuid=%08x-0001/0002/0003-1000-8000-00805f9b34fb", sn,
+		 (unsigned)prefix);
+	return STATUS_OK;
+}
 
 static ssize_t ble_gatt_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				 const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
@@ -99,6 +143,10 @@ BT_CONN_CB_DEFINE(ble_gatt_conn_cbs) = {
 
 status_t ble_gatt_init(void)
 {
+	if (!s_uuid_ready) {
+		LOG_WARN("ble_gatt: prepare skipped — filling UUID now");
+		(void)ble_gatt_prepare();
+	}
 	LOG_INFO("ble_gatt: RX write + TX notify");
 	return STATUS_OK;
 }

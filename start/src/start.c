@@ -119,5 +119,6 @@ void start_poll(void)
 {
 	led_scene_update();
 	button_schedule();
+	button_ftm_seq_poll();
 	input_schedule();
 }

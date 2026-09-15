@@ -13,6 +13,9 @@ main → start_boot → app_init → ble_init()
 
 ## GATT
 
+UUID 前 32 bit = **FNV-1a(NVS sn)**，后缀固定 `…-000N-1000-8000-00805f9b34fb`（N=1/2/3）。  
+`ble_init` 在 `bt_enable` 前调用 `ble_gatt_prepare()`。
+
 | 特征 | UUID 后缀 | 属性 |
 |------|-----------|------|
 | RX | `…0002…` | Write / Write Without Response → `ble_cmd_ingress` |

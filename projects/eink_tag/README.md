@@ -67,13 +67,17 @@ BLE 协议在仓库 [`ble/`](../../ble/)（`modules/nrf54_ble`）。
 
 | 角色 | UUID |
 |------|------|
-| Service | `53530120-0001-1000-8000-00805f9b34fb` |
-| RX（手机→设备 Write） | `53530120-0002-1000-8000-00805f9b34fb` |
-| TX（设备→手机 Notify） | `53530120-0003-1000-8000-00805f9b34fb` |
+| Service | `{FNV1a32(sn):08x}-0001-1000-8000-00805f9b34fb` |
+| RX（手机→设备 Write） | `{…}-0002-1000-8000-00805f9b34fb` |
+| TX（设备→手机 Notify） | `{…}-0003-1000-8000-00805f9b34fb` |
+
+前 32 bit = **FNV-1a(当前 NVS `sn`)**（与 `ble_gatt_prepare` 一致）。  
+首启无 `sn` 时自动生成 `T90M` + 8 hex 并落盘；串口 `nvs dump` / `ble_gatt: sn=… uuid=…` 可核对。  
+厂测用 `sn` / `sn <value>` 改号（厂测不开 BLE，无需重启；量产镜像 UUID 在 `ble_init` 时按当时 sn 固化到本次运行）。
 
 nRF Connect 步骤：
 
-1. 连接 **`eink_tag`** → 点 **Unknown Service**（上表 Service UUID）  
+1. 连接 **`eink_tag`** → 点 **Unknown Service**（UUID 前缀因台而异，后缀 `…0001…`）  
 2. 对 **TX**（`…0003…`）点三下箭头 / Enable **Notify**  
 3. 对 **RX**（`…0002…`）Write，BYTE ARRAY：  
    - 链路测试 PING：`E9030000`（或 `E9 03 00 00`）  

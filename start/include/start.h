@@ -20,7 +20,7 @@ extern "C" {
 status_t start_boot(void);
 
 /**
- * Common per-tick drivers: led_scene / button / input (no-op if not ready).
+ * Common per-tick drivers: led_scene / button / FTM seq / input (no-op if not ready).
  * Call from app_run() each loop iteration.
  */
 void start_poll(void);

@@ -31,6 +31,7 @@ Zephyr packaging lives under [`../modules/nrf54_common`](../modules/nrf54_common
 - 对照：[`demo`](../projects/demo)（UART×1 LED×2）vs [`eink_tag`](../projects/eink_tag)（UART×1 SPI从机×1 EPD + BLE + NFCT）
 - SPI：**总线** `spi_bus_count` 与 **从机** `spi_slave_count`（CS）分开计数；中断线用 `irq_count`
 - 按键：`button_init()` + 周期 `button_schedule()`（默认 20ms）
+- FTM 跳槽：键带 `BTN_PERMISSION_FTM` 即可；`start_poll()` → `button_ftm_seq_poll()`（连击 5→4→3→2）
 - 中断输入：`input_init()` 吃 `board_irq_*`；主循环 `input_schedule()`（去抖后回调）
 
 ```c
@@ -79,6 +80,8 @@ CONFIG_MPU_ALLOW_FLASH_WRITE=y
 ```
 
 产品固件设 `CONFIG_NRF54_NVS_DEFAULT_DEVICE_ID`（如 demo=`0x53530110`）；厂测保持 `0x0` 读 NVS `did`。
+
+**SN**：Settings 无 `sn` 时首启生成 `T90M` + 8 hex 随机并落盘；厂测串口 `sn` / `sn <value>` 可改（≤15 字符）。BLE GATT UUID 前缀 = FNV-1a32(sn)。
 
 Do **not** include `zephyr/logging/log.h` in the same file as `log.h` (macro clash).
 

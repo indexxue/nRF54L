@@ -3,6 +3,14 @@
  * @brief Factory serial line command framework (project-private; not in common/).
  *
  * Reply format: success `cmd:value\r\n`, failure `ng\r\n`. Built-in `help`.
+ *
+ * Length / parse limits (exceed → drop chars, register fail, or `ng`):
+ * - CMD_LINE_MAX: whole RX line (until \\r/\\n), including args
+ * - CMD_NAME_MAX: registered command name only (e.g. "ftmexit"); argv[0] match is exact
+ * - CMD_MAX_ARGC: tokens after split on space/tab
+ *
+ * Args are separate tokens when needed (space/tab). Unknown argv[0] → `ng`.
+ * Factory exit: `ftmexit` → boot_mode=app + cold reboot → Boot takes image-0 (slot0).
  */
 
 #ifndef FACTORY_CMD_H
@@ -19,8 +27,8 @@ extern "C" {
 #include "type.h"
 
 #define CMD_TX_MUTEX_TIMEOUT_MS (500U)
-#define CMD_LINE_MAX            (200U)
-#define CMD_NAME_MAX            (16U)
+#define CMD_LINE_MAX            (200U) /* entire line; longer input is truncated in feed */
+#define CMD_NAME_MAX            (16U)  /* register() name length; "ftmexit" is fine */
 #define CMD_HELP_MAX            (48U)
 #define CMD_MAX_COMMANDS        (32U)
 #define CMD_MAX_ARGC            (8U)
@@ -53,6 +61,9 @@ void cmd_uart_unlock(void);
  * Completes a line on '\\r' or '\\n' and runs cmd_process_line().
  */
 void cmd_feed_char(char ch);
+
+/** Drain console UART RX into cmd_feed_char(); no-op when cmd_rx thread is used. */
+void cmd_poll(void);
 
 #ifdef __cplusplus
 }

@@ -21,6 +21,29 @@ _SCAN_SETTLE_AFTER_DISC_S = 0.7
 _SCAN_RETRY_PAUSE_S = 0.6
 _SCAN_STOP_SETTLE_S = 0.25
 
+# SN 派生 UUID 固定尾（与 ble_gatt.c 一致）；连接时可按此模式自动发现
+_UUID_BASE_TAIL = "1000-8000-00805f9b34fb"
+
+
+def _norm_uuid(u: object) -> str:
+    return str(u).lower()
+
+
+def _discover_sn_uuids(client: BleakClient) -> tuple[str, str, str] | None:
+    """Find …-0001/0002/0003-1000-8000-00805f9b34fb service set."""
+    services = getattr(client, "services", None)
+    if services is None:
+        return None
+    for svc in services:
+        su = _norm_uuid(getattr(svc, "uuid", ""))
+        if not su.endswith(f"-0001-{_UUID_BASE_TAIL}"):
+            continue
+        prefix = su.split("-", 1)[0]
+        rx = f"{prefix}-0002-{_UUID_BASE_TAIL}"
+        tx = f"{prefix}-0003-{_UUID_BASE_TAIL}"
+        return su, rx, tx
+    return None
+
 
 class BleLocalTransport(Transport):
     name = "ble_local"
@@ -233,20 +256,32 @@ class BleLocalTransport(Transport):
             assert client is not None
             self._client = client
 
-            # Best-effort service check (some Windows stacks are picky about UUID lookup).
+            # Prefer configured UUIDs; else discover SN-derived …-000N-1000-8000-00805f9b34fb.
+            resolved_svc = svc_uuid
+            resolved_rx = rx_uuid
+            resolved_tx = tx_uuid
             try:
                 svc = client.services.get_service(svc_uuid)
                 if svc is None:
-                    await self._dispose_client(settle_s=0.3)
-                    raise TransportError(f"service not found: {svc_uuid}")
+                    found = _discover_sn_uuids(client)
+                    if found is None:
+                        await self._dispose_client(settle_s=0.3)
+                        raise TransportError(f"service not found: {svc_uuid}")
+                    resolved_svc, resolved_rx, resolved_tx = found
             except TransportError:
                 raise
             except Exception:
-                pass
+                found = _discover_sn_uuids(client)
+                if found is not None:
+                    resolved_svc, resolved_rx, resolved_tx = found
+
+            self._rx_uuid = resolved_rx
+            self._tx_uuid = resolved_tx
+            _ = resolved_svc
 
             if auto_notify and on_notify is not None:
                 try:
-                    await client.start_notify(tx_uuid, self._notify_handler)
+                    await client.start_notify(resolved_tx, self._notify_handler)
                 except Exception as exc:  # noqa: BLE001
                     await self._dispose_client(settle_s=0.3)
                     raise TransportError(f"enable notify failed: {exc}") from exc

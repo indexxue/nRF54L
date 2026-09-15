@@ -16,6 +16,12 @@ extern "C" {
 
 #include "type.h"
 
+/**
+ * 按当前 NVS sn 填充 Service/RX/TX UUID（FNV-1a → 前 32 bit）。
+ * 必须在 bt_enable / ble_stack_init 之前调用。
+ */
+status_t ble_gatt_prepare(void);
+
 status_t ble_gatt_init(void);
 
 /** Notify raw CMD frame on TX characteristic (needs link + CCC notify). */
