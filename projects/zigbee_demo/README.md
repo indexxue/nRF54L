@@ -9,7 +9,8 @@ Zigbee **End Device** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网
 | Zigbee 协议（本工程私有） | `lib/zigbee/` |
 
 - 需求：[`doc/req_nrf54_zigbee_end_device.md`](../../doc/req_nrf54_zigbee_end_device.md)  
-- 交付交接：[`doc/zigbee_demo_handoff_to_zigbridge.md`](../../doc/zigbee_demo_handoff_to_zigbridge.md)
+- 交付交接：[`doc/zigbee_demo_handoff_to_zigbridge.md`](../../doc/zigbee_demo_handoff_to_zigbridge.md)  
+- 系统角色说明：[`README_zigbee_system.md`](README_zigbee_system.md)（Coordinator / Router / ED + 应用类型）
 
 ## 依赖
 
@@ -61,11 +62,12 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | ZCL On | LED_G 亮 | `light: on` |
 | ZCL Off | LED_G 灭 | `light: off` |
 
-## 构建 / 烧录
+## 构建 / 烧录 / 发布
 
 ```powershell
 .\nrf.cmd -Project zigbee_demo build
 .\nrf.cmd -Project zigbee_demo flash
+.\nrf.cmd -Project zigbee_demo release 0.2.1   # → firmware/0.2.1/（elf/hex/bin，二进制默认不入库）
 ```
 
 ## ZigBridge-EM 联调
