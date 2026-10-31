@@ -1,6 +1,6 @@
 /**
  * @file board_config.c
- * @brief zigbee_demo — eink_tag rev_b?UART + LED×2 + BTN×2?? SPI/BLE??
+ * @brief zigbee_demo — eink_tag rev_b?UART + LED×2 + BTN×2?? SPI/BLE?
  */
 
 #include "board.h"

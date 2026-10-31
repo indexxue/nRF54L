@@ -1,7 +1,8 @@
 /*
- * zigbee_demo ? LED/?? + Zigbee ED ?????? BLE/EPD??
+ * zigbee_demo — LED/按键 + Zigbee ED + OnOff Server；无 BLE/EPD。
  *
- * BTN1 ?? ? Network Steering?BTN2 ?? ? leave / ?????????
+ * BTN1 短按 → 60s 配网窗 + Steering；BTN2 双击 → leave 清网并停住（不自动搜网）。
+ * 网关 znp light → EP1 OnOff → 板载绿灯 + light: on|off
  */
 
 #include "start.h"
@@ -19,12 +20,19 @@
 #include "nvs.h"
 
 static zigbee_app_state_t s_zb_state = ZIGBEE_APP_STATE_IDLE;
+static bool s_light_on;
 
-static void app_zb_led_apply(zigbee_app_state_t st)
+static void app_zb_led_cancel_all(void)
 {
 	led_scene_cancel(LED_SCENE_ID_PAIRING);
 	led_scene_cancel(LED_SCENE_ID_SUCCESS);
 	led_scene_cancel(LED_SCENE_ID_ERROR);
+	led_scene_cancel(LED_SCENE_ID_TRIGGER);
+}
+
+static void app_zb_led_apply(zigbee_app_state_t st)
+{
+	app_zb_led_cancel_all();
 
 	switch (st) {
 	case ZIGBEE_APP_STATE_STEERING:
@@ -38,18 +46,29 @@ static void app_zb_led_apply(zigbee_app_state_t st)
 		break;
 	case ZIGBEE_APP_STATE_IDLE:
 	default:
-		led_scene_led_direct_set(LED_SCENE_LED_0, false);
-		led_scene_led_direct_set(LED_SCENE_LED_1, false);
+		led_scene_run(LED_SCENE_ID_TRIGGER);
 		break;
 	}
 }
 
-static void app_zb_log_evt(const zigbee_app_evt_t *evt)
+static void app_light_apply(bool on)
+{
+	s_light_on = on;
+	app_zb_led_cancel_all();
+	/* 控灯用绿灯（LED0）；灭时两灯都关 */
+	led_scene_led_direct_set(LED_SCENE_LED_0, on);
+	led_scene_led_direct_set(LED_SCENE_LED_1, false);
+	LOG_INFO("light: %s", on ? "on" : "off");
+	printk("light: %s\n", on ? "on" : "off");
+}
+
+static void app_zb_log_net(const zigbee_app_evt_t *evt)
 {
 	switch (evt->state) {
 	case ZIGBEE_APP_STATE_STEERING:
 		LOG_INFO("zigbee: steering");
-		printk("zigbee: steering (ch=%d)\n", CONFIG_ZIGBEE_CHANNEL);
+		printk("zigbee: steering (ch=%d ep=%d)\n", CONFIG_ZIGBEE_CHANNEL,
+		       ZIGBEE_APP_ENDPOINT);
 		break;
 	case ZIGBEE_APP_STATE_JOINED:
 		if (evt->ieee_valid) {
@@ -84,9 +103,17 @@ static void app_handle_zigbee_evt(void)
 	zigbee_app_evt_t evt;
 
 	while (zigbee_app_evt_fetch(&evt)) {
+		if (evt.kind == ZIGBEE_APP_EVT_LIGHT) {
+			app_light_apply(evt.light_on);
+			continue;
+		}
+
 		s_zb_state = evt.state;
-		app_zb_log_evt(&evt);
+		app_zb_log_net(&evt);
 		app_zb_led_apply(evt.state);
+		if (evt.state == ZIGBEE_APP_STATE_IDLE) {
+			s_light_on = false;
+		}
 	}
 }
 
@@ -109,8 +136,11 @@ static void app_handle_button(void)
 		return;
 	}
 
-	if ((id == BTN_ID_BACK) && (ev == BTN_EVENT_LONG_PRESS)) {
-		LOG_INFO("app: BTN2 long -> leave");
+	if ((id == BTN_ID_BACK) && (ev == BTN_EVENT_DOUBLE_CLICK)) {
+		LOG_INFO("app: BTN2 double -> leave");
+		s_zb_state = ZIGBEE_APP_STATE_IDLE;
+		s_light_on = false;
+		app_zb_led_apply(ZIGBEE_APP_STATE_IDLE);
 		zigbee_app_leave_request();
 	}
 }
@@ -120,10 +150,14 @@ status_t app_init(void)
 	uint8_t bmode = nvs_boot_mode_get();
 	status_t st;
 
-	LOG_INFO("zigbee_demo app_init hw=%s bmode=%u ch=%d",
+	/* 尽早打串口，便于确认已越过 start_boot / HFXO */
+	printk("zigbee_demo boot\n");
+
+	LOG_INFO("zigbee_demo app_init hw=%s bmode=%u ch=%d ep=%d",
 		 device_profile_hardware_name(device_profile_hardware_id()), (unsigned)bmode,
-		 CONFIG_ZIGBEE_CHANNEL);
-	printk("zigbee_demo printk ok ch=%d (BTN1=steer BTN2-long=leave)\n", CONFIG_ZIGBEE_CHANNEL);
+		 CONFIG_ZIGBEE_CHANNEL, ZIGBEE_APP_ENDPOINT);
+	printk("zigbee_demo printk ok ch=%d ep=%d (BTN1=steer BTN2-dbl=leave OnOff)\n",
+	       CONFIG_ZIGBEE_CHANNEL, ZIGBEE_APP_ENDPOINT);
 
 	st = zigbee_app_start();
 	if (st != STATUS_OK) {
@@ -131,6 +165,7 @@ status_t app_init(void)
 		return st;
 	}
 
+	s_light_on = false;
 	app_zb_led_apply(ZIGBEE_APP_STATE_IDLE);
 	return STATUS_OK;
 }
@@ -138,6 +173,8 @@ status_t app_init(void)
 void app_run(void)
 {
 	LOG_INFO("zigbee_demo run (start_poll 20ms)");
+	(void)s_zb_state;
+	(void)s_light_on;
 
 	while (1) {
 		start_poll();

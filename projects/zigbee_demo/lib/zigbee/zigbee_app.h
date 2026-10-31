@@ -1,6 +1,6 @@
 /**
  * @file zigbee_app.h
- * @brief Zigbee ED：起栈 / 搜网 / leave；状态入队供 app 消费。
+ * @brief Zigbee ED：起栈 / 搜网 / leave / OnOff Server；状态入队供 app 消费。
  */
 
 #ifndef ZIGBEE_DEMO_ZIGBEE_APP_H
@@ -15,6 +15,14 @@
 extern "C" {
 #endif
 
+/** 与网关 znp light 默认 dst_ep=1 对齐 */
+#define ZIGBEE_APP_ENDPOINT 1
+
+typedef enum {
+	ZIGBEE_APP_EVT_NET = 0,
+	ZIGBEE_APP_EVT_LIGHT,
+} zigbee_app_evt_kind_t;
+
 typedef enum {
 	ZIGBEE_APP_STATE_IDLE = 0,
 	ZIGBEE_APP_STATE_STEERING,
@@ -23,10 +31,12 @@ typedef enum {
 } zigbee_app_state_t;
 
 typedef struct {
+	zigbee_app_evt_kind_t kind;
 	zigbee_app_state_t state;
 	uint16_t nwk_addr;
 	uint8_t ieee[8];
 	bool ieee_valid;
+	bool light_on;
 } zigbee_app_evt_t;
 
 status_t zigbee_app_start(void);

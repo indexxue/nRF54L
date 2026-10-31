@@ -8,8 +8,9 @@
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+#include <nrf54l15_cpuapp_partitions.dtsi>
 
-/* 分区由 Partition Manager + ncs-zigbee pm.yml.zboss 生成（NCS 3.2 路径） */
+/* 分区：上列 dtsi + Partition Manager / pm_static.yml（含 zboss_nvram） */
 
 &pinctrl {
 	uart20_default: uart20_default {
@@ -85,8 +86,10 @@
 
 &hfxo {
 	status = "okay";
+	/* 无外挂电容：自制板 15pF 常温难起、升温才振 → 先拉满内部上限 17pF。
+	 * 最终应按晶振规格书 CL 微调（合法步进 250fF，最大 17000）。 */
 	load-capacitors = "internal";
-	load-capacitance-femtofarad = <15000>;
+	load-capacitance-femtofarad = <17000>;
 };
 
 &timer20 {
