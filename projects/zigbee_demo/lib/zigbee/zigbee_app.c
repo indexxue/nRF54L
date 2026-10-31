@@ -195,7 +195,8 @@ static void zcl_device_cb(zb_bufid_t bufid)
 
 status_t zigbee_app_start(void)
 {
-	LOG_INF("zigbee: start ED ep=%d channel=%d", ZIGBEE_APP_ENDPOINT, CONFIG_ZIGBEE_CHANNEL);
+	LOG_INF("zigbee: start ED ep=%d mask=0x%08x", ZIGBEE_APP_ENDPOINT,
+		CONFIG_ZIGBEE_CHANNEL_MASK);
 
 	ZB_ZCL_REGISTER_DEVICE_CB(zcl_device_cb);
 	ZB_AF_REGISTER_DEVICE_CTX(&app_light_ctx);

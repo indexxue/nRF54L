@@ -32,7 +32,7 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | UART TX / RX | P1.04 / P1.05 |
 | LED_G / LED_B | P2.08 / P2.09（ACTIVE_LOW）；**控灯用 LED_G** |
 | BTN1 / BTN2 | P0.00 / P0.01（ACTIVE_LOW） |
-| Zigbee 信道 | **11**（`CONFIG_ZIGBEE_CHANNEL`） |
+| Zigbee 扫描 | 掩码 **11/15/20/25**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x02108800`） |
 
 无 MCUBoot / 无 FLPR；`pm_static.yml` 含 `zboss_nvram`。
 
@@ -70,7 +70,8 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 
 ## ZigBridge-EM 联调
 
-1. 网关：`znp start` → `znp join on 180`  
-2. 本机：BTN1 短按 → 对照 IEEE  
+1. 网关：确认 `znp channel`（或清网轮换后记下 ch）→ `znp join on 180`  
+2. 本机：BTN1 短按（多信道扫描，可跟上网关 11/15/20/25）→ 对照 IEEE  
 3. 网关：`znp light on` / `off` / `toggle` → 看绿灯与 `light: …`  
 4. BTN2 双击 leave，再入网 + 再控灯 ≥1 次  
+5. （建议）网关长按清网换信道后，子设备 leave 再 steer，确认仍能入网  

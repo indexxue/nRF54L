@@ -11,8 +11,9 @@
 
 nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 
-1. **Zigbee End Device**，信道含 **11**，可入网 / leave  
+1. **Zigbee End Device**，多信道扫描 **11/15/20/25**（与网关默认掩码对齐），可入网 / leave  
 2. **EP1 · OnOff Server `0x0006`**：响应网关 `znp light on|off|toggle`，板载绿灯亮灭，串口打印 `light: on` / `light: off`  
+3. **配网行为**：显式入网（60s 窗内重试）/ 显式清网（leave 后不自动搜网）— 见 [`zigbee_demo_pairing_control.md`](zigbee_demo_pairing_control.md)
 
 **ZigBridge-EM 侧无需改代码**。子设备**不解析** USART3 文本，只认空中 ZCL。
 
@@ -20,8 +21,9 @@ nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 |----|------|
 | nRF 工程 / 构建 | ✅ `.\nrf.cmd -Project zigbee_demo build` 通过；`merged.hex` 可用 |
 | ZCL 契约 | ✅ EP=**1** · Cluster=`0x0006` · On/Off/Toggle |
+| 信道扫描 | ✅ 掩码 `0x02108800`（11/15/20/25） |
 | 网关代码 | ✅ 无需改（`znp_host_zcl_onoff` + CLI 已具备） |
-| 实机入网+控灯 | ⏳ 待同场对拍（A2–A4、A6–A7） |
+| 实机入网+控灯 | ✅ 已对拍（leave→steer→joined；建议再验换信道 / light） |
 
 ---
 
@@ -43,7 +45,7 @@ nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 |----|------|
 | 路径 | `TY/nRF54L15/projects/zigbee_demo` |
 | 角色 | End Device（非 Coordinator） |
-| 信道 | 固定 **11**（`CONFIG_ZIGBEE_CHANNEL`；量产再扩掩码） |
+| 信道 | 扫描掩码 **11/15/20/25**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x02108800`） |
 | Endpoint | **1** |
 | Cluster | OnOff **`0x0006`** Server |
 | 本地输出 | 板载 **LED_G（P2.08）** 亮/灭 |
@@ -69,15 +71,16 @@ nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 
 | # | 谁 | 动作 | 期望 |
 |---|----|------|------|
-| 1 | 网关 | `znp status` | `coord=1 st=9` |
+| 1 | 网关 | `znp status`；记下 `znp channel`（或清网轮换后的 ch） | `coord=1 st=9`；ch ∈ {11,15,20,25} |
 | 2 | 子设备 | 烧录；必要时 BTN2 双击清旧网 | 就绪 |
 | 3 | 网关 | `znp join on 180` | `pj>0` |
-| 4 | 子设备 | **立刻 BTN1 短按** | `zigbee: steering` → `joined nwk=… ieee=…` |
+| 4 | 子设备 | **立刻 BTN1 短按** | `steering (mask=0x02108800…)` → `joined nwk=… ieee=…` |
 | 5 | 双方 | 对照 IEEE | 与 `[ZNP] join … ieee=` **一致** |
 | 6 | 网关 | `znp join off` | 关窗 |
 | 7 | 网关 | `znp light on` → `off` → `toggle` | 绿灯亮/灭；串口 `light: on` / `light: off` |
 | 8 | 网关 | `znp ping` | 回归 |
 | 9 | 双方 | BTN2 双击 leave → 再入网 → 再控灯 | A4 + 控灯仍可用 |
+| 10 | 建议 | 网关清网换信道后再测 leave→steer | 子设备多信道扫描仍能入网 |
 
 ### 网关控灯命令（已有）
 
@@ -95,24 +98,27 @@ znp light on 0xXXXX 1      # 指定 nwk + EP
 | ID | 标准 | 软件侧 | 实机 |
 |----|------|--------|------|
 | A1 | ED 跑 Zigbee | ✅ | — |
-| A2 | join 窗口内入网 | 就绪 | ⏳ |
-| A3 | IEEE 一致 | 就绪 | ⏳ |
-| A4 | leave 后再入 ≥1 | 就绪（BTN2 双击） | ⏳ |
+| A2 | join 窗口内入网 | ✅ | ✅ 已对拍 |
+| A3 | IEEE 一致 | ✅ | ✅ 已对拍 |
+| A4 | leave 后再入 ≥1 | ✅（BTN2 双击） | ✅ 已对拍 |
 | A5 | 不影响主线 | ✅ | — |
-| **A6** | `znp light on` → 灯亮 + on 日志 | ✅ 已实现 | ⏳ |
-| **A7** | `off` 灭；`toggle` 翻转 | ✅ 已实现 | ⏳ |
-| A8 | 掉电仍在网可控灯（建议） | NV 由 ZBOSS 保持 | ⏳ |
+| **A6** | `znp light on` → 灯亮 + on 日志 | ✅ 已实现 | ✅ / 按现场复核 |
+| **A7** | `off` 灭；`toggle` 翻转 | ✅ 已实现 | ✅ / 按现场复核 |
+| A8 | 掉电仍在网可控灯（建议） | NV 由 ZBOSS 保持 | ⏳ 建议补测 |
+| 多信道 | 掩码含 11/15/20/25 | ✅ | ✅ / 建议换 ch 再验 |
 
 ---
 
 ## 6. 失败优先查
 
 1. permit join 是否过期  
-2. 信道是否同为 **11**  
+2. 网关信道是否在子设备掩码内（**11/15/20/25**）  
 3. 旧网残留 → BTN2 双击 leave  
 4. 网关是否打到 **EP1**（默认即可）  
 5. 子设备是否 OnOff **Server**（本镜像是）  
 6. 距离 / 天线  
+
+配网状态机细节：[`zigbee_demo_pairing_control.md`](zigbee_demo_pairing_control.md)。
 
 ---
 
@@ -121,7 +127,7 @@ znp light on 0xXXXX 1      # 指定 nwk + EP
 | 会做 | 不做 |
 |------|------|
 | 入网 + EP1 OnOff 控灯 | Level / Identify 业务验收 |
-| 信道 11 联调 | BLE+Zigbee 共存；MQTT；证书 |
+| 多信道扫描（11/15/20/25）联调 | BLE+Zigbee 共存；MQTT；证书 |
 | 标准 ZCL 空中协议 | 解析网关 CLI 文本 |
 
 下一阶段（MQTT / 设备表等）另开需求。
@@ -134,7 +140,8 @@ znp light on 0xXXXX 1      # 指定 nwk + EP
 |------|------|
 | 本文件 | 交付 / 联调交接 |
 | `doc/req_nrf54_zigbee_end_device.md` | 正式需求（契约） |
-| `projects/zigbee_demo/README.md` | 烧录 / 按键 / EP |
+| `doc/zigbee_demo_pairing_control.md` | 配网状态机 / 60s 窗 / 多信道 |
+| `projects/zigbee_demo/README.md` | 烧录 / 按键 / EP / 掩码 |
 | ZigBridge `Common/Src/znp_host.c` | `znp_host_zcl_onoff`（网关已具备） |
 
 **子设备承接**：nRF54L15 `zigbee_demo`  

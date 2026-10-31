@@ -67,8 +67,8 @@ static void app_zb_log_net(const zigbee_app_evt_t *evt)
 	switch (evt->state) {
 	case ZIGBEE_APP_STATE_STEERING:
 		LOG_INFO("zigbee: steering");
-		printk("zigbee: steering (ch=%d ep=%d)\n", CONFIG_ZIGBEE_CHANNEL,
-		       ZIGBEE_APP_ENDPOINT);
+		printk("zigbee: steering (mask=0x%08x ep=%d)\n",
+		       CONFIG_ZIGBEE_CHANNEL_MASK, ZIGBEE_APP_ENDPOINT);
 		break;
 	case ZIGBEE_APP_STATE_JOINED:
 		if (evt->ieee_valid) {
@@ -153,11 +153,11 @@ status_t app_init(void)
 	/* 尽早打串口，便于确认已越过 start_boot / HFXO */
 	printk("zigbee_demo boot\n");
 
-	LOG_INFO("zigbee_demo app_init hw=%s bmode=%u ch=%d ep=%d",
+	LOG_INFO("zigbee_demo app_init hw=%s bmode=%u mask=0x%08x ep=%d",
 		 device_profile_hardware_name(device_profile_hardware_id()), (unsigned)bmode,
-		 CONFIG_ZIGBEE_CHANNEL, ZIGBEE_APP_ENDPOINT);
-	printk("zigbee_demo printk ok ch=%d ep=%d (BTN1=steer BTN2-dbl=leave OnOff)\n",
-	       CONFIG_ZIGBEE_CHANNEL, ZIGBEE_APP_ENDPOINT);
+		 CONFIG_ZIGBEE_CHANNEL_MASK, ZIGBEE_APP_ENDPOINT);
+	printk("zigbee_demo printk ok mask=0x%08x ep=%d (BTN1=steer BTN2-dbl=leave OnOff)\n",
+	       CONFIG_ZIGBEE_CHANNEL_MASK, ZIGBEE_APP_ENDPOINT);
 
 	st = zigbee_app_start();
 	if (st != STATUS_OK) {

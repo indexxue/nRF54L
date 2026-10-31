@@ -2,7 +2,7 @@
 
 > **工程**：`projects/zigbee_demo`  
 > **核心实现**：`lib/zigbee/zigbee_app.c`（协议 / 状态）；`src/app.c` 仅消费事件做灯效与日志  
-> **角色**：Zigbee End Device；联调信道 **11**（`CONFIG_ZIGBEE_CHANNEL`）  
+> **角色**：Zigbee End Device；多信道扫描 **11/15/20/25**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x02108800`，对齐网关 M5）  
 > **相关**：[`req_nrf54_zigbee_end_device.md`](req_nrf54_zigbee_end_device.md)、[`zigbee_demo_handoff_to_zigbridge.md`](zigbee_demo_handoff_to_zigbridge.md)
 
 本文描述**配网状态机与行为契约**。触发入网 / 清网的**物理按键可能改动**，正文用逻辑动作称呼；按键映射见文末宏说明。
@@ -17,6 +17,7 @@
 | 显式清网 | 仅调用 `zigbee_app_leave_request()` 才 leave / 本地 BDB 复位 |
 | 禁止默认自动搜网 | 上电未入网、leave 后、单次 Steering 失败时，抑制 Nordic 默认 `start_network_rejoin()` |
 | 配网有时限 | 入网请求开启 **`ZIGBEE_APP_STEER_WINDOW_MS`（当前 60s）** 窗；窗内失败重试，超时才 `FAILED` |
+| 多信道扫描 | `CHANNEL_SELECTION_MODE_MULTI` + 掩码含 **11/15/20/25**；入网后跟协调器实际信道（NV 由 ZBOSS 保持） |
 | 回调只入队 | ZBOSS 信号 / ZCL 回调只 `msgq` 上报；刷屏级 UI 在 `app_run` 侧消费 |
 
 Nordic `zigbee_default_signal_handler()` 在 leave / Steering 失败后会自动 rejoin。本工程在处理完业务后按需 `zigbee_network_rejoin_abort()`，避免「清网后自行搜网再 failed」或「未触发入网却自己搜网」。
@@ -243,7 +244,8 @@ IDLE/STEERING/…  ×  on_off_attr / LED_G
 
 | 缺口 | 现状 | 产品期望 |
 |------|------|----------|
-| 信道锁死 11 | `CONFIG_ZIGBEE_CHANNEL_SELECTION_MODE_SINGLE` + ch11 | 多信道扫描掩码；入网后跟随协调器信道并写 NV |
+| 扫描掩码仍固定四信道 | 已开 MULTI：`0x02108800`（11/15/20/25），对齐网关默认掩码 | 可按地区/SKU 配掩码；App 可展示「正在扫描的信道」 |
+| 入网后工作信道 | 跟协调器；依赖 ZBOSS NV（未在应用层单独打印当前 ch） | 串口/App 可读当前工作信道，便于售后对照 |
 | 无 Install Code / 增强入网 UX | 开放入网即可 | 按产品安全策略：install code、二维码、触控配网等 |
 | 无「配网中取消」独立动作 | 仅能清网或等超时 | 可选：短按取消仅关窗、不擦 NV（若已在网） |
 | 协调器踢设备 / 远程 leave | 仅本地 `bdb_reset` | 产品策略：是否响应 Mgmt Leave、是否自动允许再入 |
@@ -319,9 +321,10 @@ IDLE/STEERING/…  ×  on_off_attr / LED_G
 ```text
 BTN_ID_CONFIRM / BTN_ID_BACK
 BTN_EVENT_SINGLE_CLICK / BTN_EVENT_DOUBLE_CLICK
-ZIGBEE_APP_STEER_WINDOW_MS          # 配网窗，当前 60000
-ZIGBEE_APP_ENDPOINT                 # 1
-CONFIG_ZIGBEE_CHANNEL               # 联调 11
+ZIGBEE_APP_STEER_WINDOW_MS                 # 配网窗，当前 60000
+ZIGBEE_APP_ENDPOINT                        # 1
+CONFIG_ZIGBEE_CHANNEL_SELECTION_MODE_MULTI # 多信道扫描
+CONFIG_ZIGBEE_CHANNEL_MASK                 # 0x02108800 → ch 11/15/20/25
 ```
 
 引脚见 `projects/zigbee_demo/board/app.overlay` 的 `zephyr,user`（`btn1-gpios` / `btn2-gpios`）。
