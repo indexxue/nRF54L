@@ -6,6 +6,8 @@
  *
  * 入网：仅 STEERING st=0 才算真正入网（含 TCLK）。ZB_JOINED() 可能半入网就为 1，
  * 此时禁止 on_joined；半入网且 commissioning 已结束时先本地 leave 再重试。
+ *
+ * 同网 rejoin（契约 §2.3）：已入网身份仍在时 Must 恢复可达；未入网禁止自动搜网。
  */
 
 #include "zigbee_app.h"
@@ -33,6 +35,9 @@ LOG_MODULE_REGISTER(zigbee_app, LOG_LEVEL_INF);
 /** leave / 半入网复位后再开 Steering，给栈与对端清表时间 */
 #define ZIGBEE_APP_STEER_RETRY_AFTER_LEAVE_MS 3000
 #define ZIGBEE_APP_STEER_RETRY_MS 1500
+/** 同网 rejoin 退避：2s 起，指数上限 64s */
+#define ZIGBEE_APP_REJOIN_RETRY_MIN_MS 2000U
+#define ZIGBEE_APP_REJOIN_RETRY_MAX_MS 64000U
 
 struct zb_device_ctx {
 	zb_zcl_basic_attrs_t basic_attr;
@@ -43,6 +48,8 @@ struct zb_device_ctx {
 static struct zb_device_ctx s_dev_ctx;
 static atomic_t s_steer_window_active;
 static atomic_t s_leave_pending;
+static atomic_t s_same_net_rejoin_active;
+static uint8_t s_rejoin_attempt;
 static struct k_work_delayable s_steer_window_work;
 
 ZB_ZCL_DECLARE_IDENTIFY_ATTRIB_LIST(identify_attr_list, &s_dev_ctx.identify_attr.identify_time);
@@ -66,14 +73,107 @@ static void zigbee_app_do_steer(zb_bufid_t bufid);
 static void zigbee_app_do_steer_timeout(zb_bufid_t bufid);
 static void zigbee_app_do_leave(zb_bufid_t bufid);
 static void zigbee_app_do_force_leave_keep_window(zb_bufid_t bufid);
+static void zigbee_app_do_same_net_rejoin(zb_bufid_t bufid);
 static void zigbee_app_on_joined(void);
 static void zigbee_app_schedule_steer_retry(uint32_t delay_ms);
 static void zigbee_app_arm_force_leave_keep_window(void);
+static void zigbee_app_same_net_rejoin_stop(void);
+static void zigbee_app_same_net_rejoin_start(const char *reason);
+static uint32_t zigbee_app_rejoin_backoff_ms(void);
+static void zigbee_app_schedule_same_net_rejoin_retry(uint32_t delay_ms);
+static void zigbee_app_log_rejoin_ok(void);
 
 static void zigbee_app_steer_window_stop(void)
 {
 	(void)k_work_cancel_delayable(&s_steer_window_work);
 	atomic_set(&s_steer_window_active, 0);
+}
+
+static uint32_t zigbee_app_rejoin_backoff_ms(void)
+{
+	uint32_t delay = ZIGBEE_APP_REJOIN_RETRY_MIN_MS << s_rejoin_attempt;
+
+	if (delay > ZIGBEE_APP_REJOIN_RETRY_MAX_MS || delay < ZIGBEE_APP_REJOIN_RETRY_MIN_MS) {
+		delay = ZIGBEE_APP_REJOIN_RETRY_MAX_MS;
+	}
+	if (s_rejoin_attempt < 16U) {
+		s_rejoin_attempt++;
+	}
+	return delay;
+}
+
+static void zigbee_app_same_net_rejoin_stop(void)
+{
+	(void)ZB_SCHEDULE_APP_ALARM_CANCEL(zigbee_app_do_same_net_rejoin, ZB_ALARM_ANY_PARAM);
+	atomic_set(&s_same_net_rejoin_active, 0);
+	s_rejoin_attempt = 0U;
+}
+
+static void zigbee_app_schedule_same_net_rejoin_retry(uint32_t delay_ms)
+{
+	if (atomic_get(&s_same_net_rejoin_active) == 0) {
+		return;
+	}
+	if (atomic_get(&s_steer_window_active) != 0) {
+		return;
+	}
+	printk("zigbee: rejoin retry delay_ms=%u\n", (unsigned)delay_ms);
+	(void)ZB_SCHEDULE_APP_ALARM_CANCEL(zigbee_app_do_same_net_rejoin, ZB_ALARM_ANY_PARAM);
+	ZB_SCHEDULE_APP_ALARM(zigbee_app_do_same_net_rejoin, 0,
+			      ZB_MILLISECONDS_TO_BEACON_INTERVAL(delay_ms));
+}
+
+/**
+ * 已入网身份仍在：启动同网 BDB steering（节点在网 rejoin），接管重试；掐掉 Nordic 未入网搜网。
+ */
+static void zigbee_app_same_net_rejoin_start(const char *reason)
+{
+	if (zb_bdb_is_factory_new()) {
+		return;
+	}
+	if (atomic_get(&s_steer_window_active) != 0) {
+		return;
+	}
+
+	if (!atomic_cas(&s_same_net_rejoin_active, 0, 1)) {
+		/* 已在同网 rejoin：不重置退避，避免 parent_unreachable 刷屏 */
+		return;
+	}
+	s_rejoin_attempt = 0U;
+	printk("zigbee: rejoin start reason=%s\n", reason != NULL ? reason : "unknown");
+	LOG_INF("zigbee: rejoin start reason=%s", reason != NULL ? reason : "unknown");
+	zigbee_app_evt_post_net(ZIGBEE_APP_STATE_REJOINING, false);
+	(void)ZB_SCHEDULE_APP_ALARM_CANCEL(zigbee_app_do_same_net_rejoin, ZB_ALARM_ANY_PARAM);
+	ZB_SCHEDULE_APP_CALLBACK(zigbee_app_do_same_net_rejoin, 0);
+}
+
+static void zigbee_app_do_same_net_rejoin(zb_bufid_t bufid)
+{
+	ZVUNUSED(bufid);
+	if (atomic_get(&s_same_net_rejoin_active) == 0) {
+		return;
+	}
+	if (atomic_get(&s_steer_window_active) != 0) {
+		return;
+	}
+
+	zigbee_network_join_commissioning_set_active(true);
+	if (!bdb_start_top_level_commissioning(ZB_BDB_NETWORK_STEERING)) {
+		LOG_WRN("zigbee: rejoin steering rejected");
+		zigbee_network_join_commissioning_set_active(false);
+		zigbee_app_schedule_same_net_rejoin_retry(zigbee_app_rejoin_backoff_ms());
+	}
+}
+
+static void zigbee_app_log_rejoin_ok(void)
+{
+	zb_ieee_addr_t ieee;
+
+	zb_get_long_address(ieee);
+	printk("zigbee: rejoin ok nwk=0x%04x ieee=%02X%02X%02X%02X%02X%02X%02X%02X\n",
+	       zb_get_short_address(), ieee[7], ieee[6], ieee[5], ieee[4], ieee[3], ieee[2],
+	       ieee[1], ieee[0]);
+	LOG_INF("zigbee: rejoin ok nwk=0x%04x", zb_get_short_address());
 }
 
 /**
@@ -82,11 +182,17 @@ static void zigbee_app_steer_window_stop(void)
  */
 static void zigbee_app_on_joined(void)
 {
+	bool was_rejoin = (atomic_get(&s_same_net_rejoin_active) != 0);
+
 	zigbee_app_steer_window_stop();
 	atomic_set(&s_leave_pending, 0);
 	(void)ZB_SCHEDULE_APP_ALARM_CANCEL(zigbee_app_do_steer, ZB_ALARM_ANY_PARAM);
+	zigbee_app_same_net_rejoin_stop();
 	zigbee_network_join_commissioning_set_active(false);
 	zigbee_network_rejoin_abort();
+	if (was_rejoin && ZB_JOINED()) {
+		zigbee_app_log_rejoin_ok();
+	}
 	zigbee_app_evt_post_net(ZIGBEE_APP_STATE_JOINED, true);
 }
 
@@ -140,6 +246,7 @@ static void zigbee_app_evt_post_net(zigbee_app_state_t state, bool with_addr)
 		.kind = ZIGBEE_APP_EVT_NET,
 		.state = state,
 		.nwk_addr = 0U,
+		.parent_nwk = 0U,
 		.ieee_valid = false,
 		.light_on = false,
 	};
@@ -148,6 +255,7 @@ static void zigbee_app_evt_post_net(zigbee_app_state_t state, bool with_addr)
 		zb_ieee_addr_t ieee;
 
 		evt.nwk_addr = zb_get_short_address();
+		evt.parent_nwk = zb_nwk_get_parent();
 		zb_get_long_address(ieee);
 		memcpy(evt.ieee, ieee, sizeof(evt.ieee));
 		evt.ieee_valid = true;
@@ -164,6 +272,7 @@ static void zigbee_app_evt_post_light(bool on)
 		.kind = ZIGBEE_APP_EVT_LIGHT,
 		.state = ZIGBEE_APP_STATE_IDLE,
 		.nwk_addr = 0U,
+		.parent_nwk = 0U,
 		.ieee_valid = false,
 		.light_on = on,
 	};
@@ -186,6 +295,7 @@ static void zigbee_app_do_leave(zb_bufid_t bufid)
 	ZVUNUSED(bufid);
 	LOG_INF("zigbee: leave / factory reset network");
 	zigbee_app_steer_window_stop();
+	zigbee_app_same_net_rejoin_stop();
 	atomic_set(&s_leave_pending, 1);
 	(void)ZB_SCHEDULE_APP_ALARM_CANCEL(zigbee_app_do_steer, ZB_ALARM_ANY_PARAM);
 	/* 先停自动 rejoin，清网后由 BTN1 显式入网 */
@@ -214,6 +324,7 @@ static void zigbee_app_do_nv_erase_reboot(zb_bufid_t bufid)
 	ZVUNUSED(bufid);
 	LOG_INF("zigbee: erase zboss_nvram + reboot");
 	zigbee_app_steer_window_stop();
+	zigbee_app_same_net_rejoin_stop();
 	atomic_set(&s_leave_pending, 0);
 	zigbee_network_rejoin_abort();
 	/*
@@ -281,6 +392,7 @@ static void zcl_device_cb(zb_bufid_t bufid)
 			bool on = (device_cb_param->cb_param.set_attr_value_param.values.data8 !=
 				   0U);
 
+			printk("zigbee: zcl onoff=%d\n", on ? 1 : 0);
 			zigbee_app_evt_post_light(on);
 		} else {
 			device_cb_param->status = RET_NOT_IMPLEMENTED;
@@ -307,6 +419,14 @@ status_t zigbee_app_start(void)
 			     ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
 			     &s_dev_ctx.on_off_attr.on_off, ZB_FALSE);
 
+	/*
+	 * Router 须常听：本机 OnOff Server + 为 ED 中继。
+	 * 显式置位，与 zigbee_ed 联调策略对齐，避免 leave/再入网后能力位含糊。
+	 * 须在 zigbee_enable() 之前调用。
+	 */
+	zb_set_rx_on_when_idle(ZB_TRUE);
+	printk("zigbee: rx_on_when_idle=1 (Router always-on)\n");
+
 	zigbee_enable();
 	k_work_init_delayable(&s_steer_window_work, zigbee_app_steer_window_work_fn);
 	zigbee_app_evt_post_net(ZIGBEE_APP_STATE_IDLE, false);
@@ -316,6 +436,8 @@ status_t zigbee_app_start(void)
 void zigbee_app_steer_request(void)
 {
 	LOG_INF("zigbee: steer request (BTN1)");
+	/* 显式入网优先：停同网 rejoin，开配网窗 */
+	zigbee_app_same_net_rejoin_stop();
 	zigbee_app_steer_window_start();
 	zigbee_app_evt_post_net(ZIGBEE_APP_STATE_STEERING, false);
 	ZB_SCHEDULE_APP_CALLBACK(zigbee_app_do_steer, 0);
@@ -344,22 +466,44 @@ void zboss_signal_handler(zb_bufid_t bufid)
 	zb_zdo_app_signal_hdr_t *sig_hnd = NULL;
 	zb_zdo_app_signal_type_t sig = zb_get_app_signal(bufid, &sig_hnd);
 	zb_ret_t status = ZB_GET_APP_SIGNAL_STATUS(bufid);
-	/* 方案 A：未按键不自动搜网；BTN1 开 60s 窗，窗内失败重试 */
+	/* §2.3：未入网禁自动搜网；已入网同网 rejoin 由本侧接管，不 abort 掐死 */
 	bool abort_auto_rejoin = false;
 	bool retry_steer = false;
+	bool retry_same_net = false;
 	bool force_leave_keep_window = false;
 	uint32_t retry_ms = ZIGBEE_APP_STEER_RETRY_MS;
 
 	if (sig != ZB_COMMON_SIGNAL_CAN_SLEEP) {
-		printk("zigbee: sig=%u st=%d joined=%d win=%d\n", (unsigned)sig, (int)status,
-		       ZB_JOINED() ? 1 : 0, atomic_get(&s_steer_window_active) ? 1 : 0);
+		printk("zigbee: sig=%u st=%d joined=%d win=%d rejoin=%d\n", (unsigned)sig,
+		       (int)status, ZB_JOINED() ? 1 : 0,
+		       atomic_get(&s_steer_window_active) ? 1 : 0,
+		       atomic_get(&s_same_net_rejoin_active) ? 1 : 0);
 	}
 
 	switch (sig) {
 	case ZB_BDB_SIGNAL_DEVICE_FIRST_START:
-	case ZB_BDB_SIGNAL_DEVICE_REBOOT:
+		/* NFN cold start with NV: same as reboot — must re-attach (P2). */
 		if (status == RET_OK && ZB_JOINED()) {
-			zigbee_app_on_joined();
+			zigbee_app_same_net_rejoin_start("first_start_joined");
+		} else if (status != RET_OK) {
+			zigbee_app_evt_post_net(ZIGBEE_APP_STATE_FAILED, false);
+			abort_auto_rejoin = true;
+		} else {
+			zigbee_app_evt_post_net(ZIGBEE_APP_STATE_IDLE, false);
+			abort_auto_rejoin = true;
+		}
+		break;
+
+	case ZB_BDB_SIGNAL_DEVICE_REBOOT:
+		/*
+		 * rejoin_contract P2: local ZB_JOINED after reboot is not enough for
+		 * the gateway to "find" us — force same-net rejoin / parent recovery.
+		 */
+		if (status == RET_OK && ZB_JOINED()) {
+			zigbee_app_same_net_rejoin_start("reboot_joined");
+		} else if (status != RET_OK && !zb_bdb_is_factory_new()) {
+			/* NFN 重启失败：同网 rejoin，勿 abort */
+			zigbee_app_same_net_rejoin_start("reboot_fail");
 		} else if (status != RET_OK) {
 			zigbee_app_evt_post_net(ZIGBEE_APP_STATE_FAILED, false);
 			abort_auto_rejoin = true;
@@ -386,8 +530,42 @@ void zboss_signal_handler(zb_bufid_t bufid)
 				retry_steer = true;
 				retry_ms = ZIGBEE_APP_STEER_RETRY_AFTER_LEAVE_MS;
 			}
+		} else if (atomic_get(&s_same_net_rejoin_active) != 0 ||
+			   !zb_bdb_is_factory_new()) {
+			if (atomic_cas(&s_same_net_rejoin_active, 0, 1)) {
+				zigbee_app_evt_post_net(ZIGBEE_APP_STATE_REJOINING, false);
+			}
+			printk("zigbee: rejoin fail st=%d (will retry)\n", (int)status);
+			LOG_INF("zigbee: rejoin fail st=%d (will retry)", (int)status);
+			retry_same_net = true;
 		} else {
 			abort_auto_rejoin = true;
+		}
+		break;
+
+	case ZB_NWK_SIGNAL_NO_ACTIVE_LINKS_LEFT:
+		/* 协调器掉电等：Nordic 默认只打日志，本侧发起同网 rejoin */
+		if (!zb_bdb_is_factory_new()) {
+			zigbee_app_same_net_rejoin_start("parent_unreachable");
+		}
+		break;
+
+	case ZB_NLME_STATUS_INDICATION:
+		/* 父/链路失败：与 NO_ACTIVE_LINKS 互补（ED 挂 Router 时尤甚） */
+		if (status == RET_OK && sig_hnd != NULL && !zb_bdb_is_factory_new()) {
+			zb_zdo_signal_nlme_status_indication_params_t *nlme =
+				ZB_ZDO_SIGNAL_GET_PARAMS(
+					sig_hnd, zb_zdo_signal_nlme_status_indication_params_t);
+			zb_uint8_t nwk_st = nlme->nlme_status.status;
+
+			printk("zigbee: nlme status=0x%02x nwk=0x%04x\n", (unsigned)nwk_st,
+			       nlme->nlme_status.network_addr);
+			if (nwk_st == ZB_NWK_COMMAND_STATUS_PARENT_LINK_FAILURE ||
+			    nwk_st == ZB_NWK_COMMAND_STATUS_TREE_LINK_FAILURE ||
+			    nwk_st == ZB_NWK_COMMAND_STATUS_NONE_TREE_LINK_FAILURE ||
+			    nwk_st == ZB_NWK_COMMAND_STATUS_TARGET_DEVICE_UNAVAILABLE) {
+				zigbee_app_same_net_rejoin_start("parent_link_fail");
+			}
 		}
 		break;
 
@@ -401,9 +579,39 @@ void zboss_signal_handler(zb_bufid_t bufid)
 			retry_ms = ZIGBEE_APP_STEER_RETRY_AFTER_LEAVE_MS;
 			LOG_INF("zigbee: leave during steer window — retry");
 		} else {
+			zigbee_app_same_net_rejoin_stop();
 			zigbee_app_steer_window_stop();
 			zigbee_app_evt_post_net(ZIGBEE_APP_STATE_IDLE, false);
 			abort_auto_rejoin = true;
+		}
+		break;
+
+	case ZB_ZDO_SIGNAL_DEVICE_UPDATE:
+		/* parent/TC：有设备 join/rejoin/leave 经本节点；对照 ED ieee */
+		if (status == RET_OK && sig_hnd != NULL) {
+			zb_zdo_signal_device_update_params_t *up =
+				ZB_ZDO_SIGNAL_GET_PARAMS(sig_hnd,
+							 zb_zdo_signal_device_update_params_t);
+
+			printk("zigbee: child/dev update nwk=0x%04x st=%u ieee=%02X%02X%02X%02X%02X%02X%02X%02X\n",
+			       up->short_addr, (unsigned)up->status, up->long_addr[7],
+			       up->long_addr[6], up->long_addr[5], up->long_addr[4],
+			       up->long_addr[3], up->long_addr[2], up->long_addr[1],
+			       up->long_addr[0]);
+		}
+		break;
+
+	case ZB_ZDO_SIGNAL_LEAVE_INDICATION:
+		if (status == RET_OK && sig_hnd != NULL) {
+			zb_zdo_signal_leave_indication_params_t *li =
+				ZB_ZDO_SIGNAL_GET_PARAMS(
+					sig_hnd, zb_zdo_signal_leave_indication_params_t);
+
+			printk("zigbee: child leave ieee=%02X%02X%02X%02X%02X%02X%02X%02X rejoin=%u\n",
+			       li->device_addr[7], li->device_addr[6], li->device_addr[5],
+			       li->device_addr[4], li->device_addr[3], li->device_addr[2],
+			       li->device_addr[1], li->device_addr[0],
+			       (unsigned)li->rejoin);
 		}
 		break;
 
@@ -413,7 +621,11 @@ void zboss_signal_handler(zb_bufid_t bufid)
 
 	ZB_ERROR_CHECK(zigbee_default_signal_handler(bufid));
 
-	if (abort_auto_rejoin) {
+	/*
+	 * 同网 rejoin 活跃时掐掉 Nordic 未入网自动搜网退避，改由本侧
+	 * do_same_net_rejoin 重试（避免双开 commissioning）。
+	 */
+	if (abort_auto_rejoin || (atomic_get(&s_same_net_rejoin_active) != 0)) {
 		zigbee_network_rejoin_abort();
 	}
 	if (force_leave_keep_window) {
@@ -421,6 +633,8 @@ void zboss_signal_handler(zb_bufid_t bufid)
 	} else if (retry_steer && (atomic_get(&s_steer_window_active) != 0) &&
 		   (atomic_get(&s_leave_pending) == 0)) {
 		zigbee_app_schedule_steer_retry(retry_ms);
+	} else if (retry_same_net && (atomic_get(&s_same_net_rejoin_active) != 0)) {
+		zigbee_app_schedule_same_net_rejoin_retry(zigbee_app_rejoin_backoff_ms());
 	}
 
 	if (bufid) {

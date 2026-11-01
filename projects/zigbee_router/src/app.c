@@ -37,6 +37,7 @@ static void app_zb_led_apply(zigbee_app_state_t st)
 
 	switch (st) {
 	case ZIGBEE_APP_STATE_STEERING:
+	case ZIGBEE_APP_STATE_REJOINING:
 		led_scene_run(LED_SCENE_ID_PAIRING);
 		break;
 	case ZIGBEE_APP_STATE_JOINED:
@@ -71,17 +72,25 @@ static void app_zb_log_net(const zigbee_app_evt_t *evt)
 		printk("zigbee: steering (mask=0x%08x ep=%d)\n",
 		       CONFIG_ZIGBEE_CHANNEL_MASK, ZIGBEE_APP_ENDPOINT);
 		break;
+	case ZIGBEE_APP_STATE_REJOINING:
+		LOG_INFO("zigbee: rejoining");
+		printk("zigbee: rejoining (same-net)\n");
+		break;
 	case ZIGBEE_APP_STATE_JOINED:
 		if (evt->ieee_valid) {
+			/* 0x0000=协调器；Router 自身 parent 多为 coord */
+			const char *parent_role =
+				(evt->parent_nwk == 0x0000U) ? "coord" : "non-coord";
+
 			LOG_INFO(
-				"zigbee: joined nwk=0x%04x ieee=%02X%02X%02X%02X%02X%02X%02X%02X",
-				evt->nwk_addr, evt->ieee[7], evt->ieee[6], evt->ieee[5],
-				evt->ieee[4], evt->ieee[3], evt->ieee[2], evt->ieee[1],
-				evt->ieee[0]);
-			printk("zigbee: joined nwk=0x%04x ieee=%02X%02X%02X%02X%02X%02X%02X%02X\n",
-			       evt->nwk_addr, evt->ieee[7], evt->ieee[6], evt->ieee[5],
-			       evt->ieee[4], evt->ieee[3], evt->ieee[2], evt->ieee[1],
-			       evt->ieee[0]);
+				"zigbee: joined nwk=0x%04x parent=0x%04x(%s) ieee=%02X%02X%02X%02X%02X%02X%02X%02X",
+				evt->nwk_addr, evt->parent_nwk, parent_role, evt->ieee[7],
+				evt->ieee[6], evt->ieee[5], evt->ieee[4], evt->ieee[3],
+				evt->ieee[2], evt->ieee[1], evt->ieee[0]);
+			printk("zigbee: joined nwk=0x%04x parent=0x%04x(%s) ieee=%02X%02X%02X%02X%02X%02X%02X%02X\n",
+			       evt->nwk_addr, evt->parent_nwk, parent_role, evt->ieee[7],
+			       evt->ieee[6], evt->ieee[5], evt->ieee[4], evt->ieee[3],
+			       evt->ieee[2], evt->ieee[1], evt->ieee[0]);
 		} else {
 			LOG_INFO("zigbee: joined");
 			printk("zigbee: joined\n");

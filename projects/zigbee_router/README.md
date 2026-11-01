@@ -50,6 +50,8 @@ Zigbee **Router** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 
 - 仅 `STEERING` 且 status OK 才报 joined（避免过早掐 TCLK）  
 - 半入网（`ZB_JOINED` 但无 STEERING OK）→ 强制本地 leave，禁止死等  
 - leave 完成前 defer steer；leave 后再开 Steering 间隔 3s  
+- **同网 rejoin（契约 §2.3）**：协调器整机掉电同 ch/pan 后，见 `zigbee: rejoin start reason=parent_unreachable` → `rejoin ok`；未入网仍禁止自动搜网  
+- **控灯可达**：`rx_on_when_idle=1`；收到 ZCL 打 `zigbee: zcl onoff=`；网关需 AF ACK+路由发现（ZigBridge `ZNP_AF_OPTIONS_DEFAULT`）——leave 后再入网用**新 nwk** 控灯  
 
 ## ZigBridge 验收（本期）
 
@@ -57,5 +59,6 @@ Zigbee **Router** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 
 2. 网关侧确认设备为 **Router**（非 Sleepy ED）  
 3. `znp light on` / `off` / `toggle` → 绿灯 + `light: …`  
 4. leave 后再入网 + 再控灯 ≥1  
+5. **同网掉电**：网关整机掉电（勿 `znp clear`）→ 子设备 `rejoin start`/`rejoin ok` → 网关见 annce/tc 后 light 再可控（无需清本机 NV）  
 
 中继（第二台 ED 只够到本板）：后续加测，非本期必须。

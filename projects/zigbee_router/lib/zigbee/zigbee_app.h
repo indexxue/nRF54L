@@ -26,6 +26,8 @@ typedef enum {
 typedef enum {
 	ZIGBEE_APP_STATE_IDLE = 0,
 	ZIGBEE_APP_STATE_STEERING,
+	/** 已入网身份仍在，同网 rejoin / 父节点恢复中（契约 §2.3） */
+	ZIGBEE_APP_STATE_REJOINING,
 	ZIGBEE_APP_STATE_JOINED,
 	ZIGBEE_APP_STATE_FAILED,
 } zigbee_app_state_t;
@@ -34,6 +36,8 @@ typedef struct {
 	zigbee_app_evt_kind_t kind;
 	zigbee_app_state_t state;
 	uint16_t nwk_addr;
+	/** parent 短地址；0x0000=协调器；仅 JOINED 且 ieee_valid 时有效 */
+	uint16_t parent_nwk;
 	uint8_t ieee[8];
 	bool ieee_valid;
 	bool light_on;

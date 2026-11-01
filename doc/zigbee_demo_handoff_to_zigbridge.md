@@ -2,14 +2,15 @@
 
 > **给谁看**：ZigBridge-EM（网关 / ZNP）同事  
 > **对应需求**：[`req_nrf54_zigbee_end_device.md`](req_nrf54_zigbee_end_device.md)（**以该文 ZCL 契约为准**）  
-> **子设备工程**：`TY/nRF54L15/projects/zigbee_demo`  
+> **掉电 / 再关联**：[`zigbee_rejoin_contract.md`](zigbee_rejoin_contract.md)（ED/Router 共用；与网关仓同名同步）  
+> **子设备工程**：`TY/nRF54L15/projects/zigbee_ed`（原 `zigbee_demo`；Router 见 `zigbee_router`）  
 > **交付日期**：2026-10-30  
 
 ---
 
 ## 1. 一句话结论
 
-nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
+nRF54L15 已交付独立联调镜像 **`zigbee_ed`**（原名 `zigbee_demo`）：
 
 1. **Zigbee End Device**，多信道扫描 **11/15/20/25**（与网关默认掩码对齐），可入网 / leave  
 2. **EP1 · OnOff Server `0x0006`**：响应网关 `znp light on|off|toggle`，板载绿灯亮灭，串口打印 `light: on` / `light: off`  
@@ -19,7 +20,7 @@ nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 
 | 侧 | 状态 |
 |----|------|
-| nRF 工程 / 构建 | ✅ `.\nrf.cmd -Project zigbee_demo build` 通过；`merged.hex` 可用 |
+| nRF 工程 / 构建 | ✅ `.\nrf.cmd -Project zigbee_ed build` 通过；`merged.hex` 可用 |
 | ZCL 契约 | ✅ EP=**1** · Cluster=`0x0006` · On/Off/Toggle |
 | 信道扫描 | ✅ 掩码 `0x02108800`（11/15/20/25） |
 | 网关代码 | ✅ 无需改（`znp_host_zcl_onoff` + CLI 已具备） |
@@ -31,7 +32,7 @@ nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 
 ```text
 ┌─────────────────────────────┐         Ch11 Zigbee          ┌─────────────────────────────┐
-│  ZigBridge-EM（Coordinator） │◄────────────────────────────►│  nRF54L15 zigbee_demo (ED) │
+│  ZigBridge-EM（Coordinator） │◄────────────────────────────►│  nRF54L15 zigbee_ed (ED)   │
 │  znp join / znp light …     │   ZCL OnOff → EP1 Server     │  绿灯 = 灯输出              │
 │  USART3 @ 115200            │                              │  UART20 @ 115200            │
 └─────────────────────────────┘                              └─────────────────────────────┘
@@ -43,7 +44,7 @@ nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 
 | 项 | 内容 |
 |----|------|
-| 路径 | `TY/nRF54L15/projects/zigbee_demo` |
+| 路径 | `TY/nRF54L15/projects/zigbee_ed` |
 | 角色 | End Device（非 Coordinator） |
 | 信道 | 扫描掩码 **11/15/20/25**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x02108800`） |
 | Endpoint | **1** |
@@ -59,11 +60,11 @@ nRF54L15 已交付独立联调镜像 **`zigbee_demo`**：
 ### 烧录
 
 ```powershell
-.\nrf.cmd -Project zigbee_demo build
-.\nrf.cmd -Project zigbee_demo flash
+.\nrf.cmd -Project zigbee_ed build
+.\nrf.cmd -Project zigbee_ed flash
 ```
 
-依赖：`NCS_ZIGBEE_ROOT` → ncs-zigbee v1.4.0（见工程 README）。
+依赖：`NCS_ZIGBEE_ROOT` → ncs-zigbee v1.4.0（见工程 README）。Router：`.\nrf.cmd -Project zigbee_router build`。
 
 ---
 
@@ -141,8 +142,9 @@ znp light on 0xXXXX 1      # 指定 nwk + EP
 | 本文件 | 交付 / 联调交接 |
 | `doc/req_nrf54_zigbee_end_device.md` | 正式需求（契约） |
 | `doc/zigbee_demo_pairing_control.md` | 配网状态机 / 60s 窗 / 多信道 |
-| `projects/zigbee_demo/README.md` | 烧录 / 按键 / EP / 掩码 |
+| `projects/zigbee_ed/README.md` | 烧录 / 按键 / EP / 掩码（ED） |
+| `projects/zigbee_router/README.md` | Router 入网 + 控灯 |
 | ZigBridge `Common/Src/znp_host.c` | `znp_host_zcl_onoff`（网关已具备） |
 
-**子设备承接**：nRF54L15 `zigbee_demo`  
+**子设备承接**：nRF54L15 `zigbee_ed`（ED）/ `zigbee_router`（Router）  
 **网关配合**：`znp join on` + `znp light …`（已具备）

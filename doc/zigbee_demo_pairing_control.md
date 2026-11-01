@@ -1,9 +1,9 @@
 # zigbee_demo 配网控制逻辑
 
-> **工程**：`projects/zigbee_demo`  
+> **工程**：`projects/zigbee_ed`（原 `zigbee_demo`；Router 工程 `zigbee_router` 配网 UX 相同）  
 > **核心实现**：`lib/zigbee/zigbee_app.c`（协议 / 状态）；`src/app.c` 仅消费事件做灯效与日志  
 > **角色**：Zigbee End Device；多信道扫描 **11/15/20/25**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x02108800`，对齐网关 M5）  
-> **相关**：[`req_nrf54_zigbee_end_device.md`](req_nrf54_zigbee_end_device.md)、[`zigbee_demo_handoff_to_zigbridge.md`](zigbee_demo_handoff_to_zigbridge.md)
+> **相关**：[`req_nrf54_zigbee_end_device.md`](req_nrf54_zigbee_end_device.md)、[`zigbee_demo_handoff_to_zigbridge.md`](zigbee_demo_handoff_to_zigbridge.md)、[`zigbee_rejoin_contract.md`](zigbee_rejoin_contract.md)（掉电同网 rejoin Must）
 
 本文描述**配网状态机与行为契约**。触发入网 / 清网的**物理按键可能改动**，正文用逻辑动作称呼；按键映射见文末宏说明。
 
@@ -15,12 +15,22 @@
 |------|------|
 | 显式入网 | 仅调用 `zigbee_app_steer_request()` 才开配网窗并发起 Network Steering |
 | 显式清网 | 仅调用 `zigbee_app_leave_request()` 才 leave / 本地 BDB 复位 |
-| 禁止默认自动搜网 | 上电未入网、leave 后、单次 Steering 失败时，抑制 Nordic 默认 `start_network_rejoin()` |
+| **rejoin 分界** | 与 [`zigbee_rejoin_contract.md`](zigbee_rejoin_contract.md) **§2.3** 一致（见下） |
+| 禁止未入网自动搜网 | **未入网**（出厂 / leave / 清 NV）：抑制 Nordic 默认自动 steering / 未入网搜网 |
+| 已入网须同网 rejoin | **已入网身份仍在**（含协调器整机掉电后同网）：Must 同网 rejoin / 父节点恢复至应用可达；**不得** abort 掉同网恢复 |
 | 配网有时限 | 入网请求开启 **`ZIGBEE_APP_STEER_WINDOW_MS`（当前 60s）** 窗；窗内失败重试，超时才 `FAILED` |
 | 多信道扫描 | `CHANNEL_SELECTION_MODE_MULTI` + 掩码含 **11/15/20/25**；入网后跟协调器实际信道（NV 由 ZBOSS 保持） |
 | 回调只入队 | ZBOSS 信号 / ZCL 回调只 `msgq` 上报；刷屏级 UI 在 `app_run` 侧消费 |
 
-Nordic `zigbee_default_signal_handler()` 在 leave / Steering 失败后会自动 rejoin。本工程在处理完业务后按需 `zigbee_network_rejoin_abort()`，避免「清网后自行搜网再 failed」或「未触发入网却自己搜网」。
+```text
+未入网  →  不自动搜网；仅显式 steer_request
+已入网  →  必须能同网 rejoin（协调器重启后仍回到同一小区）
+断代后  →  先 leave/清 NV，再显式 steering
+```
+
+Nordic `zigbee_default_signal_handler()` 在 leave / Steering 失败后会自动 rejoin。  
+**仅在未入网路径**按需 `zigbee_network_rejoin_abort()`，避免「清网后自行搜网」或「未触发入网却自己搜网」。  
+**已入网掉线 / 协调器重启**：本侧 `s_same_net_rejoin_active` + BDB steering 同网 rejoin（`NO_ACTIVE_LINKS` / `DEVICE_REBOOT` 失败）；掐掉 Nordic 未入网退避以免双开，由本侧指数退避重试（2s…64s）。
 
 ---
 
@@ -39,8 +49,9 @@ Nordic `zigbee_default_signal_handler()` 在 leave / Steering 失败后会自动
 |------|------|--------------|------------------------|
 | `IDLE` | 未在网 / 已 leave，等待入网请求 | `zigbee: idle / left` | TRIGGER |
 | `STEERING` | 配网窗打开，正在 / 即将 Network Steering | `zigbee: steering` | PAIRING |
+| `REJOINING` | 已入网身份仍在，同网 rejoin 中（§2.3） | `zigbee: rejoining (same-net)` / `rejoin start|fail|ok` | PAIRING |
 | `JOINED` | 已入网，可收 ZCL | `zigbee: joined nwk=… ieee=…` | SUCCESS |
-| `FAILED` | 配网窗超时，或窗外 Steering 失败 | `zigbee: failed` | ERROR |
+| `FAILED` | 配网窗超时，或窗外未入网 Steering 失败 | `zigbee: failed` | ERROR |
 
 另有独立事件 `ZIGBEE_APP_EVT_LIGHT`（OnOff），**不改变**上表网络状态；控灯时可能改写 LED，与网络灯效存在抢灯（见 §7）。
 
@@ -196,11 +207,16 @@ IDLE/STEERING/…  ×  on_off_attr / LED_G
 
 | 信号 | 条件 | 行为 |
 |------|------|------|
-| `DEVICE_FIRST_START` / `DEVICE_REBOOT` | 已在网 | → `JOINED` |
-| 同上 | 成功但未入网 | → `IDLE`，abort 自动搜网 |
-| 同上 | status 失败 | → `FAILED`，abort 自动搜网 |
+| `DEVICE_REBOOT` | OK 且 `ZB_JOINED` | → `JOINED`（栈已用 NV 恢复） |
+| `DEVICE_REBOOT` | 失败且 NFN | → `REJOINING` + `rejoin start reason=reboot_fail`；本侧同网 steering 退避 |
+| `DEVICE_FIRST_START` / `DEVICE_REBOOT` | 成功但**未入网** | → `IDLE`，**abort** 自动搜网 |
+| 同上 | 失败且 factory new | → `FAILED`；abort 自动搜网 |
+| `NO_ACTIVE_LINKS_LEFT` | NFN（协调器掉电等） | → `REJOINING` + `rejoin start reason=parent_unreachable` |
 
-网络凭证落在 ZBOSS NVRAM（`zboss_nvram` / `pm_static.yml`）。**已入网设备重启应直接 `JOINED`**，无需再发入网请求。
+网络凭证落在 ZBOSS NVRAM（`zboss_nvram` / `pm_static.yml`）。  
+**已入网设备重启 / 协调器同网恢复**：保留 NV，不要求再按入网键；串口应见 `rejoin …` 直至 `rejoin ok` / `joined`，不能假设「本机曾 JOINED = 网关已能控灯」。  
+
+> **实现状态（2026-11-01）**：§2.3 已在 `zigbee_ed` / `zigbee_router` 落地；与「禁止未入网自动搜网」分界见契约。
 
 ---
 
@@ -254,7 +270,7 @@ IDLE/STEERING/…  ×  on_off_attr / LED_G
 
 | 缺口 | 现状 | 产品期望 |
 |------|------|----------|
-| 父节点丢失 / 间接 leave | 未单独状态；可能依赖栈默认（且部分路径被 abort） | 明确：自动 rejoin 多久、失败是否提示、是否要求用户再开配网窗 |
+| 父节点丢失 / 间接 leave | 已：`REJOINING` + 同网 rejoin 指数退避（2s…64s）；leave 后停 | 产品可 Kconfig 化超时 / App 提示；是否最终要求用户再开配网窗 |
 | Sleepy ED / 功耗 | 未按电池标签优化 | `rx_on_when_idle`、轮询周期、配网期抬高占空比 |
 | 配网窗与重试参数 | 60s / 0.5s / 1s 写死宏 | 可 Kconfig；与 App「正在添加设备」倒计时对齐 |
 
@@ -327,4 +343,4 @@ CONFIG_ZIGBEE_CHANNEL_SELECTION_MODE_MULTI # 多信道扫描
 CONFIG_ZIGBEE_CHANNEL_MASK                 # 0x02108800 → ch 11/15/20/25
 ```
 
-引脚见 `projects/zigbee_demo/board/app.overlay` 的 `zephyr,user`（`btn1-gpios` / `btn2-gpios`）。
+引脚见 `projects/zigbee_ed/board/app.overlay` 的 `zephyr,user`（`btn1-gpios` / `btn2-gpios`）。

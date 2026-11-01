@@ -2,7 +2,8 @@
 
 > **文档用途**：跨仓库交接 / 需求传递（ZigBridge-EM → nRF54L15）。请子设备同事**按本文契约实现**，不必解析网关串口文本。  
 > **产品背景**：按**量产上市**路径开发（用户家配网 → 控灯；日后 MQTT 走同一空中协议）。当前可用 USART3 CLI 代替 App 触发，空中仍是标准 ZCL。  
-> **全流程总览**（可选阅读）：[`product_full_process_guide.md`](product_full_process_guide.md)  
+> **掉电 / 再关联（ED/Router 共用）**：[`zigbee_rejoin_contract.md`](zigbee_rejoin_contract.md)（与网关仓 `doc/zigbee_rejoin_contract.md` **同名同步**）。  
+> **全流程总览**（可选阅读）：网关仓 `product_full_process_guide.md`  
 > **状态日期**：2026-10-30  
 
 ---
@@ -28,7 +29,7 @@
 | 项 | 内容 |
 |----|------|
 | 网关工程 | `TY/ZigBridge-EM`（与 `TY/nRF54L15` **同级**） |
-| 子设备工程 | 建议 `projects/zigbee_demo` / `zigbee_ed`（**勿破坏**现有 BLE 量产路径） |
+| 子设备工程 | `projects/zigbee_ed`（ED）、`projects/zigbee_router`（Router）（**勿破坏**现有 BLE 量产路径） |
 | 网关已完成 | ZNP ping、协调器建网、permit join、**AF/ZCL OnOff 发送 + CLI** |
 | 本需求目标 | nRF54L15 作 ED：**入网 + OnOff Server 控灯**，与网关对拍 |
 | 非目标（本期） | MQTT、设备表持久化（网关侧）、量产证书、BLE+Zigbee 长期共存产品化、Level 调光 |

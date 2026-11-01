@@ -21,7 +21,7 @@ list(APPEND EXTRA_ZEPHYR_MODULES
 set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_SOURCE_DIR}/board/app.overlay)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(zigbee_demo)
+project(zigbee_ed)
 
 target_sources(app PRIVATE
   src/app.c

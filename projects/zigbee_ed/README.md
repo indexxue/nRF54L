@@ -1,6 +1,8 @@
-# zigbee_demo
+# zigbee_ed
 
 Zigbee **End Device** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 `znp light` 控板载绿灯。  
+原工程名 **`zigbee_demo`**（固件 **0.2.1** 产物文件名仍带 `zigbee_demo`）。Router 联调见 [`../zigbee_router`](../zigbee_router/)。
+
 板级脚取自 `eink_tag` rev_b（UART / LED×2 / BTN×2）。**无** BLE、EPD、PN5180。
 
 | 层 | 路径 |
@@ -51,24 +53,32 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | 操作 | 行为 |
 |------|------|
 | BTN1 短按 | 开启 **60s** 配网窗并 Network Steering（窗内失败会重试） |
-| BTN2 双击 | leave（清网络，停在 idle，不自动搜网） |
+| BTN2 双击 | leave（BDB 本地复位，停在 idle，不自动搜网） |
+| BTN2 **长按 3s** | **擦 `zboss_nvram` + 冷复位**（换 Router 镜像前建议做） |
 
 | 状态 | LED | 串口 |
 |------|-----|------|
 | steering | PAIRING 蓝慢闪 | `zigbee: steering` |
+| rejoining | PAIRING | `zigbee: rejoin start …` / `rejoining` / `rejoin ok` |
 | joined | SUCCESS 绿/蓝交替 | `zigbee: joined nwk=… ieee=…` |
 | failed | ERROR 快闪 | `zigbee: failed` |
 | idle / left | TRIGGER 绿闪 | `zigbee: idle / left` |
 | ZCL On | LED_G 亮 | `light: on` |
 | ZCL Off | LED_G 灭 | `light: off` |
 
+同网 rejoin（契约 [`zigbee_rejoin_contract.md`](../../doc/zigbee_rejoin_contract.md) §2.3）：协调器整机掉电同 ch/pan 后应自动 `rejoin`，无需清本机 NV；未入网仍仅 BTN1 显式入网。
+
+控灯可达（与 Router 对齐）：联调 `rx_on_when_idle=1`；空中到站见 `zigbee: zcl onoff=`；网关需烧录带 AF ACK+路由发现的 ZigBridge；leave 后再入网用**新 nwk** 控灯。
+
 ## 构建 / 烧录 / 发布
 
 ```powershell
-.\nrf.cmd -Project zigbee_demo build
-.\nrf.cmd -Project zigbee_demo flash
-.\nrf.cmd -Project zigbee_demo release 0.2.1   # → firmware/0.2.1/（elf/hex/bin，二进制默认不入库）
+.\nrf.cmd -Project zigbee_ed build
+.\nrf.cmd -Project zigbee_ed flash
+.\nrf.cmd -Project zigbee_ed release 0.2.1   # → firmware/0.2.1/（elf/hex/bin，二进制默认不入库）
 ```
+
+刷机前若刚跑过 Router 镜像：建议 BTN2 双击 leave 或擦 `zboss_nvram`，避免角色脏网表。
 
 ## ZigBridge-EM 联调
 
@@ -77,3 +87,4 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 3. 网关：`znp light on` / `off` / `toggle` → 看绿灯与 `light: …`  
 4. BTN2 双击 leave，再入网 + 再控灯 ≥1 次  
 5. （建议）网关长按清网换信道后，子设备 leave 再 steer，确认仍能入网  
+6. **同网掉电**：网关整机掉电（勿 clear）→ 本机 `rejoin start`/`rejoin ok` → 再控灯（无需清本机 NV）
