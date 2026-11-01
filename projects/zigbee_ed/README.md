@@ -1,7 +1,7 @@
 # zigbee_ed
 
 Zigbee **End Device** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 `znp light` 控板载绿灯。  
-原工程名 **`zigbee_demo`**（固件 **0.2.1** 产物文件名仍带 `zigbee_demo`）。Router 联调见 [`../zigbee_router`](../zigbee_router/)。
+原工程名 **`zigbee_demo`**。当前联调固件 **0.2.2**（见 `firmware/0.2.2/`）。Router 联调见 [`../zigbee_router`](../zigbee_router/)。
 
 板级脚取自 `eink_tag` rev_b（UART / LED×2 / BTN×2）。**无** BLE、EPD、PN5180。
 
@@ -75,7 +75,7 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 ```powershell
 .\nrf.cmd -Project zigbee_ed build
 .\nrf.cmd -Project zigbee_ed flash
-.\nrf.cmd -Project zigbee_ed release 0.2.1   # → firmware/0.2.1/（elf/hex/bin，二进制默认不入库）
+.\nrf.cmd -Project zigbee_ed release 0.2.2   # → firmware/0.2.2/（elf/hex/bin，二进制默认不入库）
 ```
 
 刷机前若刚跑过 Router 镜像：建议 BTN2 双击 leave 或擦 `zboss_nvram`，避免角色脏网表。
