@@ -74,6 +74,12 @@ typedef void (*btn_notify_t)(btn_id_e id, const char *name, btn_permission_e per
 status_t button_init(btn_notify_t notify);
 void button_deinit(void);
 
+/**
+ * 调整已注册按键的长按门限（ms）。默认 10000。
+ * 须在 button_init() 之后调用；long_hold = long_press + 1000ms。
+ */
+void button_long_press_ms_set(uint32_t ms);
+
 /** 按 FLEX_BTN_SCAN_FREQ_HZ（默认 50Hz）周期调用，例如每 20ms。 */
 void button_schedule(void);
 

@@ -224,6 +224,21 @@ status_t button_init(btn_notify_t notify)
 	return STATUS_OK;
 }
 
+void button_long_press_ms_set(uint32_t ms)
+{
+	if (!self.ready || (ms < 500U)) {
+		return;
+	}
+
+	for (uint8_t i = 0; i < self.num; i++) {
+		flex_button_t *flex = &s_button_list[i].flex;
+
+		flex->long_press_start_tick = FLEX_MS_TO_SCAN_CNT(ms);
+		flex->long_hold_start_tick = FLEX_MS_TO_SCAN_CNT(ms + 1000U);
+	}
+	LOG_INFO("button: long_press=%u ms", (unsigned)ms);
+}
+
 void button_deinit(void)
 {
 	memset(&self, 0, sizeof(button_item_t));
@@ -277,10 +292,14 @@ void button_ftm_seq_poll(void)
 	uint8_t clicks;
 	int64_t now;
 
-	if (!event_is_set(EVT_ID_BUTTON)) {
+	/*
+	 * event_is_set() 会清掉 EVT 位。必须先看是否 FTM 键，否则非 FTM
+	 *（如 eink_tag CONFIRM 双击切屏）会被 start_poll 吃掉，app 收不到。
+	 */
+	if ((button_last_permission_get() & (uint16_t)BTN_PERMISSION_FTM) == 0U) {
 		return;
 	}
-	if ((button_last_permission_get() & (uint16_t)BTN_PERMISSION_FTM) == 0U) {
+	if (!event_is_set(EVT_ID_BUTTON)) {
 		return;
 	}
 

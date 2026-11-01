@@ -12,7 +12,7 @@
 
 ## 特性
 
-- 多工程布局：`projects/demo`（模板）、`projects/eink_tag`（NFC/BLE→墨水屏标签）、`projects/factory`（厂测骨架）
+- 多工程布局：`projects/demo`（模板）、`projects/eink_tag`（NFC/BLE→墨水屏标签）、`projects/factory`（厂测骨架）、`projects/zigbee_ed`（Zigbee ED，原 `zigbee_demo`）、`projects/zigbee_router`（Zigbee Router + 控灯）
 - 共享起机：`start/`（`main` / `start_boot` / `start_poll`）；工程只写 `app_init` / `app_run`
 - 共享模块：`log` / `nvs` / `device_profile` / `board`（结构体+掩码）/ `led_scene` / `event` / `crc32` / `flexible_button` / `fw_version`
 - 分区规划已锁定：MCUBoot 双槽 + storage（见 [`doc/flash_layout.md`](doc/flash_layout.md)）
@@ -85,6 +85,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify_env.ps1
 | `.\nrf.cmd build` | 调试编译（默认只编 app domain，快） |
 | `.\nrf.cmd build-all` | 全量 sysbuild（MCUBoot + app + merged.hex） |
 | `.\nrf.cmd -Project factory build` | 编译指定工程（app domain） |
+| `.\nrf.cmd -Project zigbee_ed build` | Zigbee ED 联调（需 `NCS_ZIGBEE_ROOT`，见该工程 README） |
+| `.\nrf.cmd -Project zigbee_router build` | Zigbee Router + OnOff 控灯联调 |
 | `.\nrf.cmd -Project factory release 0.0.1` | 发布构建并归档到 `firmware/` |
 | `.\nrf.cmd -Project demo flash` | J-Link：MCUBoot + APP@slot0 |
 | `.\nrf.cmd -Project factory flash` | J-Link：厂测 signed.bin **只写 slot1**（不动 boot/slot0） |

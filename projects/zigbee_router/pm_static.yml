@@ -1,0 +1,32 @@
+# zigbee_router single-image layout (no MCUBoot / no FLPR)
+# zboss_nvram 32 KiB, zboss_product_config 4 KiB (ncs-zigbee defaults)
+
+app:
+  address: 0x0
+  end_address: 0x172000
+  region: flash_primary
+  size: 0x172000
+
+settings_storage:
+  address: 0x172000
+  end_address: 0x174000
+  region: flash_primary
+  size: 0x2000
+
+zboss_nvram:
+  address: 0x174000
+  end_address: 0x17c000
+  region: flash_primary
+  size: 0x8000
+
+zboss_product_config:
+  address: 0x17c000
+  end_address: 0x17d000
+  region: flash_primary
+  size: 0x1000
+
+sram_primary:
+  address: 0x20000000
+  end_address: 0x20040000
+  region: sram_primary
+  size: 0x40000
