@@ -1,7 +1,7 @@
 /*
  * zigbee_ed — LED/按键 + Zigbee ED + OnOff Server；无 BLE/EPD。
  *
- * BTN1 短按 → 60s 配网窗 + Steering；
+ * BTN1 短按 → 60s 配网窗 + Steering；BTN1 长按 ≈5s → boot_mode=factory 进厂测；
  * BTN2 双击 → leave；BTN2 长按 3s → 擦 ZBOSS NVRAM 并重启。
  * 网关 znp light → EP1 OnOff → 板载绿灯 + light: on|off
  */
@@ -11,6 +11,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/reboot.h>
 
 #include "board.h"
 #include "button.h"
@@ -146,6 +147,19 @@ static void app_handle_button(void)
 		return;
 	}
 
+	if ((id == BTN_ID_CONFIRM) && (ev == BTN_EVENT_LONG_PRESS)) {
+		LOG_INFO("app: BTN1 long 5s -> boot_mode=factory");
+		printk("app: BTN1 long -> factory reboot\n");
+		if (!nvs_boot_mode_set(NVS_BOOT_MODE_FACTORY)) {
+			LOG_ERROR("app: nvs_boot_mode_set(factory) failed");
+			printk("app: factory boot_mode set fail\n");
+			return;
+		}
+		k_msleep(50);
+		sys_reboot(SYS_REBOOT_COLD);
+		return;
+	}
+
 	if ((id == BTN_ID_BACK) && (ev == BTN_EVENT_DOUBLE_CLICK)) {
 		LOG_INFO("app: BTN2 double -> leave");
 		s_zb_state = ZIGBEE_APP_STATE_IDLE;
@@ -170,13 +184,14 @@ status_t app_init(void)
 	/* 尽早打串口，便于确认已越过 start_boot / HFXO */
 	printk("zigbee_ed boot\n");
 
-	/* BTN2 长按清 NV：门限 3s（common 默认 10s） */
+	/* BTN2 清 NV=3s；BTN1 进厂测=5s（勿给 BTN1 加 FTM permission，否则连击吞配网单击） */
 	button_long_press_ms_set(3000U);
+	button_long_press_ms_set_id(BTN_ID_CONFIRM, 5000U);
 
 	LOG_INFO("zigbee_ed app_init hw=%s bmode=%u mask=0x%08x ep=%d",
 		 device_profile_hardware_name(device_profile_hardware_id()), (unsigned)bmode,
 		 CONFIG_ZIGBEE_CHANNEL_MASK, ZIGBEE_APP_ENDPOINT);
-	printk("zigbee_ed ok mask=0x%08x ep=%d (BTN1=steer BTN2-dbl=leave BTN2-long3s=eraseNV)\n",
+	printk("zigbee_ed ok mask=0x%08x ep=%d (BTN1=steer/long5s=ftm BTN2-dbl=leave BTN2-long3s=eraseNV)\n",
 	       CONFIG_ZIGBEE_CHANNEL_MASK, ZIGBEE_APP_ENDPOINT);
 
 	st = zigbee_app_start();

@@ -12,7 +12,8 @@ Zigbee **Router** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 
 
 - 需求：[`doc/req_nrf54_zigbee_end_device.md`](../../doc/req_nrf54_zigbee_end_device.md)（允许 Router）  
 - ED 镜像：[`../zigbee_ed`](../zigbee_ed/)  
-- 系统角色：[`../zigbee_ed/README_zigbee_system.md`](../zigbee_ed/README_zigbee_system.md)
+- 系统角色：[`../zigbee_ed/README_zigbee_system.md`](../zigbee_ed/README_zigbee_system.md)  
+- **量产边界**：本工程 **禁止** 本机 Coordinator / 厂测 `zbcmd` 后门；临时双机 TOOL/UUT 仅在 [`projects/factory`](../factory/)（计划 [`doc/plan_zigbee_factory_temp_coord.md`](../../doc/plan_zigbee_factory_temp_coord.md)）
 
 ## 与 zigbee_ed 的差异
 
@@ -25,15 +26,29 @@ Zigbee **Router** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 
 
 ## 依赖 / 板级 / ZCL / 按键
 
-与 `zigbee_ed` 相同：NCS + ncs-zigbee v1.4.0；信道掩码 11/15/20/25；EP1 OnOff `0x0006`。
+与 `zigbee_ed` 相同：NCS + ncs-zigbee v1.4.0；信道掩码 11/15/20/25；EP1 OnOff `0x0006`；TX 功率 `CONFIG_ZIGBEE_APP_TX_POWER`（默认 +8 dBm）；**MCUBoot** swap-move（无 FLPR）。
 
 | 按键 | 行为 |
 |------|------|
 | BTN1 短按 | 60s 配网窗 + Steering |
+| BTN1 长按 ≈5s | `boot_mode=factory` + 冷复位进厂测（slot1 须已烧 factory） |
 | BTN2 双击 | leave（BDB 本地复位，不停自动搜网） |
 | BTN2 **长按 3s** | **擦 `zboss_nvram` + 冷复位**（ED↔Router 换角色 / 脏网表） |
 
 ## 构建 / 烧录
+
+整包（Boot + Router@slot0 + factory@slot1）：
+
+```powershell
+.\nrf.cmd -Project zigbee_router fullclean
+.\nrf.cmd -Project zigbee_router build-all
+.\nrf.cmd -Project zigbee_router flash
+.\nrf.cmd -Project factory build-all
+.\nrf.cmd -Project factory flash
+.\nrf.cmd boot-mode app
+```
+
+日常：
 
 ```powershell
 .\nrf.cmd -Project zigbee_router build

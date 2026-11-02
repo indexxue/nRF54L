@@ -1,7 +1,7 @@
 # zigbee_ed
 
 Zigbee **End Device** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 `znp light` 控板载绿灯。  
-原工程名 **`zigbee_demo`**。当前联调固件 **0.2.2**（见 `firmware/0.2.2/`）。Router 联调见 [`../zigbee_router`](../zigbee_router/)。
+原工程名 **`zigbee_demo`**。当前联调固件 **0.2.3**（见 `firmware/0.2.3/`）。Router 联调见 [`../zigbee_router`](../zigbee_router/)。
 
 板级脚取自 `eink_tag` rev_b（UART / LED×2 / BTN×2）。**无** BLE、EPD、PN5180。
 
@@ -12,7 +12,8 @@ Zigbee **End Device** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网
 
 - 需求：[`doc/req_nrf54_zigbee_end_device.md`](../../doc/req_nrf54_zigbee_end_device.md)  
 - 交付交接：[`doc/zigbee_demo_handoff_to_zigbridge.md`](../../doc/zigbee_demo_handoff_to_zigbridge.md)  
-- 系统角色说明：[`README_zigbee_system.md`](README_zigbee_system.md)（Coordinator / Router / ED + 应用类型）
+- 系统角色说明：[`README_zigbee_system.md`](README_zigbee_system.md)（Coordinator / Router / ED + 应用类型）  
+- **量产边界**：本工程 **禁止** 临时 Coord / `zbcmd` 厂测后门；该类能力仅在 [`projects/factory`](../factory/)（计划 [`doc/plan_zigbee_factory_temp_coord.md`](../../doc/plan_zigbee_factory_temp_coord.md)）
 
 ## 依赖
 
@@ -36,8 +37,9 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | LED_G / LED_B | P2.08 / P2.09（ACTIVE_LOW）；**控灯用 LED_G** |
 | BTN1 / BTN2 | P0.00 / P0.01（ACTIVE_LOW） |
 | Zigbee 扫描 | 掩码 **11/15/20/25**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x02108800`） |
+| Zigbee TX 功率 | `CONFIG_ZIGBEE_APP_TX_POWER`（默认 **+8** dBm；`lib/zigbee/zigbee_app.c` 起栈 apply） |
 
-无 MCUBoot / 无 FLPR；`pm_static.yml` 含 `zboss_nvram`。
+**MCUBoot** 已接（swap-move，无 FLPR）：slot0=本工程，slot1=factory；`pm_static` 含 `zboss_nvram` + `boot_share`。BTN1 长按 ≈5s → `boot_mode=factory` 进厂测。
 
 ## ZCL 契约（对拍网关）
 
@@ -53,6 +55,7 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | 操作 | 行为 |
 |------|------|
 | BTN1 短按 | 开启 **60s** 配网窗并 Network Steering（窗内失败会重试） |
+| BTN1 长按 ≈5s | `boot_mode=factory` + 冷复位进厂测（须 MCUBoot + slot1 已烧 factory） |
 | BTN2 双击 | leave（BDB 本地复位，停在 idle，不自动搜网） |
 | BTN2 **长按 3s** | **擦 `zboss_nvram` + 冷复位**（换 Router 镜像前建议做） |
 
@@ -72,10 +75,23 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 
 ## 构建 / 烧录 / 发布
 
+整包（Boot + APP@slot0 + factory@slot1）：
+
+```powershell
+.\nrf.cmd -Project zigbee_ed fullclean
+.\nrf.cmd -Project zigbee_ed build-all
+.\nrf.cmd -Project zigbee_ed flash              # MCUBoot + zigbee_ed@slot0
+.\nrf.cmd -Project factory build-all
+.\nrf.cmd -Project factory flash                # factory → slot1
+.\nrf.cmd boot-mode app                         # 默认起 slot0（厂测用 BTN1 长按或 boot-mode factory）
+```
+
+日常只改 APP：
+
 ```powershell
 .\nrf.cmd -Project zigbee_ed build
 .\nrf.cmd -Project zigbee_ed flash
-.\nrf.cmd -Project zigbee_ed release 0.2.2   # → firmware/0.2.2/（elf/hex/bin，二进制默认不入库）
+.\nrf.cmd -Project zigbee_ed release 0.2.3   # → firmware/0.2.3/
 ```
 
 刷机前若刚跑过 Router 镜像：建议 BTN2 双击 leave 或擦 `zboss_nvram`，避免角色脏网表。

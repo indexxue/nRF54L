@@ -8,9 +8,8 @@
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
-#include <nrf54l15_cpuapp_partitions.dtsi>
 
-/* 分区：上列 dtsi + Partition Manager / pm_static.yml（含 zboss_nvram） */
+/* 分区由 Partition Manager / pm_static.yml（MCUBoot + zboss）管理 */
 
 &pinctrl {
 	uart20_default: uart20_default {
@@ -40,15 +39,7 @@
 	pinctrl-names = "default", "sleep";
 };
 
-/* 无 FLPR：恢复全片 RRAM/SRAM */
-&cpuapp_rram {
-	reg = <0x0 DT_SIZE_K(1524)>;
-};
-
-&cpuapp_sram {
-	reg = <0x20000000 DT_SIZE_K(256)>;
-	ranges = <0x0 0x20000000 0x40000>;
-};
+/* MCUBoot：勿扩到 1524KB（否则 PM 在 0x165000 后多出 gap）。用板级默认 1428KB。 */
 
 &pwm20 {
 	status = "disabled";

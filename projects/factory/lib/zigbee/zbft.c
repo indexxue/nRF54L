@@ -30,6 +30,9 @@ LOG_MODULE_REGISTER(zbft, LOG_LEVEL_INF);
 
 #define ZBFT_EP 10
 #define ZBFT_CH_DEFAULT 15U
+#define ZBFT_TX_PWR_DEFAULT 8
+#define ZBFT_TX_PWR_MIN (-40)
+#define ZBFT_TX_PWR_MAX 8
 #define ZBFT_NS "zbft"
 #define ZBFT_KEY_REQ "req"
 #define ZBFT_KEY_CH "ch"
@@ -54,6 +57,7 @@ struct zbft_dev_ctx {
 static struct zbft_dev_ctx s_dev;
 static zbft_mode_t s_mode = ZBFT_MODE_IDLE;
 static uint8_t s_channel = ZBFT_CH_DEFAULT;
+static int8_t s_tx_power = ZBFT_TX_PWR_DEFAULT;
 static bool s_stack_started;
 static bool s_net_up;
 static bool s_settings_loaded;
@@ -445,6 +449,42 @@ static void zbft_permit_join_cb(zb_uint8_t param, zb_uint16_t duration)
 	printk("zbft: join open %u s\n", (unsigned)duration);
 }
 
+static void zbft_tx_power_cb(zb_bufid_t param)
+{
+	zb_tx_power_params_t *p = zb_buf_begin(param);
+
+	if (p->status == RET_OK) {
+		printk("zbft: tx_pwr=%d dBm ok\n", (int)p->tx_power);
+	} else {
+		printk("zbft: tx_pwr set fail st=%d\n", (int)p->status);
+	}
+	zb_buf_free(param);
+}
+
+static void zbft_tx_power_apply_cb(zb_bufid_t param, zb_uint16_t unused)
+{
+	zb_tx_power_params_t *p;
+
+	(void)unused;
+	p = zb_buf_initial_alloc(param, sizeof(*p));
+	p->page = ZB_CHANNEL_PAGE0_2_4_GHZ;
+	p->channel = s_channel;
+	p->tx_power = s_tx_power;
+	p->cb = zbft_tx_power_cb;
+	ZB_SCHEDULE_APP_CALLBACK(zb_set_tx_power_async, param);
+}
+
+static bool zbft_tx_power_apply(void)
+{
+	zb_ret_t ret;
+
+	if (!s_stack_started) {
+		return true;
+	}
+	ret = zb_buf_get_out_delayed_ext(zbft_tx_power_apply_cb, 0, 0);
+	return ret == RET_OK;
+}
+
 static void zbft_start_stack(zbft_mode_t mode)
 {
 	uint32_t mask = zbft_channel_mask(s_channel);
@@ -462,10 +502,11 @@ static void zbft_start_stack(zbft_mode_t mode)
 
 	if (mode == ZBFT_MODE_TOOL) {
 		zb_set_network_coordinator_role(mask);
-		printk("zbft: mode=tool ch=%u\n", (unsigned)s_channel);
+		printk("zbft: mode=tool ch=%u pwr=%d\n", (unsigned)s_channel, (int)s_tx_power);
 	} else {
 		zb_set_network_router_role(mask);
-		printk("zbft: mode=uut (router) ch=%u\n", (unsigned)s_channel);
+		printk("zbft: mode=uut (router) ch=%u pwr=%d\n", (unsigned)s_channel,
+		       (int)s_tx_power);
 	}
 
 	zigbee_erase_persistent_storage(ZB_TRUE);
@@ -473,6 +514,7 @@ static void zbft_start_stack(zbft_mode_t mode)
 	s_stack_started = true;
 	s_mode = mode;
 	s_net_up = false;
+	(void)zbft_tx_power_apply();
 }
 
 void zboss_signal_handler(zb_bufid_t bufid)
@@ -620,6 +662,60 @@ bool zbft_channel_set(uint8_t ch)
 		return false;
 	}
 	s_channel = ch;
+	return true;
+}
+
+int8_t zbft_tx_power_get(void)
+{
+	return s_tx_power;
+}
+
+bool zbft_tx_power_set(int8_t dbm)
+{
+	if ((dbm < ZBFT_TX_PWR_MIN) || (dbm > ZBFT_TX_PWR_MAX)) {
+		return false;
+	}
+	s_tx_power = dbm;
+	if (!s_stack_started) {
+		return true;
+	}
+	return zbft_tx_power_apply();
+}
+
+bool zbft_rssi_get(int8_t *rssi_dbm, uint8_t *lqi)
+{
+	zb_uint16_t peer;
+	zb_uint8_t lqa = ZB_MAC_LQI_UNDEFINED;
+	zb_int8_t rssi = (zb_int8_t)ZB_MAC_RSSI_UNDEFINED;
+
+	if ((rssi_dbm == NULL) || (lqi == NULL)) {
+		return false;
+	}
+	if (!zbft_net_up()) {
+		return false;
+	}
+
+	if (s_mode == ZBFT_MODE_TOOL) {
+		if (!s_dut_joined) {
+			return false;
+		}
+		peer = s_joined_short;
+	} else if (s_mode == ZBFT_MODE_UUT) {
+		peer = zb_nwk_get_parent();
+		if (peer == 0xFFFFU) {
+			return false;
+		}
+	} else {
+		return false;
+	}
+
+	zb_zdo_get_diag_data(peer, &lqa, &rssi);
+	if ((uint8_t)rssi == ZB_MAC_RSSI_UNDEFINED) {
+		return false;
+	}
+
+	*rssi_dbm = (int8_t)rssi;
+	*lqi = lqa;
 	return true;
 }
 
@@ -818,9 +914,9 @@ int zbft_status_snprintk(char *buf, size_t buf_len)
 	}
 
 	n = snprintk(buf, buf_len,
-		     "mode=%s ch=%u started=%u net=%u pan=0x%04x nwk=0x%04x ieee=%s "
+		     "mode=%s ch=%u pwr=%d started=%u net=%u pan=0x%04x nwk=0x%04x ieee=%s "
 		     "allow=%s joined=%s sn=%s",
-		     mode_s, (unsigned)s_channel, s_stack_started ? 1U : 0U,
+		     mode_s, (unsigned)s_channel, (int)s_tx_power, s_stack_started ? 1U : 0U,
 		     zbft_net_up() ? 1U : 0U,
 		     s_stack_started ? (unsigned)ZB_PIBCACHE_PAN_ID() : 0U,
 		     s_stack_started ? (unsigned)zb_get_short_address() : 0U, ieee_s, allow_s,

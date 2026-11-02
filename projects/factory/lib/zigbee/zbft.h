@@ -51,6 +51,19 @@ zbft_enter_result_t zbft_role_enter(zbft_mode_t mode);
 /** Set channel 11..26 before stack start; false if busy or OOR. */
 bool zbft_channel_set(uint8_t ch);
 
+/**
+ * TX power (dBm), session RAM only (reboot → default +8).
+ * Range -40..+8. Applied at stack start; may also set after start (async).
+ */
+int8_t zbft_tx_power_get(void);
+bool zbft_tx_power_set(int8_t dbm);
+
+/**
+ * Last known RSSI/LQI toward peer (TOOL→joined DUT, UUT→parent).
+ * False if stack/net/peer missing or RSSI undefined (no RX yet).
+ */
+bool zbft_rssi_get(int8_t *rssi_dbm, uint8_t *lqi);
+
 /** Fill status line (no CR/LF); returns bytes written or -1. */
 int zbft_status_snprintk(char *buf, size_t buf_len);
 

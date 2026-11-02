@@ -34,24 +34,22 @@ static uint8_t app_probe_slot(void)
  */
 static void factory_hw_init_eink_tag(void)
 {
-	LOG_INFO("factory hw init: eink_tag (stub)");
+	/* stub */
 }
 
 static void factory_hw_init_demo(void)
 {
-	LOG_INFO("factory hw init: demo (stub)");
+	/* stub */
 }
 
 static void factory_hw_init_default(void)
 {
-	LOG_INFO("factory hw init: default");
+	/* stub */
 }
 
 static void factory_hw_init(void)
 {
 	uint32_t did = nvs_device_id_get();
-
-	LOG_INFO("factory hw init did=0x%08x (%s)", did, nvs_device_id_project_name(did));
 
 	if (did == NVS_PROJECT_ID_EINK_TAG) {
 		factory_hw_init_eink_tag();

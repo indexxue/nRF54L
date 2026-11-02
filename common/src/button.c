@@ -220,7 +220,6 @@ status_t button_init(btn_notify_t notify)
 	}
 
 	self.ready = true;
-	LOG_INFO("button: init ok keys=%u", self.num);
 	return STATUS_OK;
 }
 
@@ -237,6 +236,23 @@ void button_long_press_ms_set(uint32_t ms)
 		flex->long_hold_start_tick = FLEX_MS_TO_SCAN_CNT(ms + 1000U);
 	}
 	LOG_INFO("button: long_press=%u ms", (unsigned)ms);
+}
+
+void button_long_press_ms_set_id(btn_id_e id, uint32_t ms)
+{
+	if (!self.ready || (ms < 500U)) {
+		return;
+	}
+
+	for (uint8_t i = 0; i < self.num; i++) {
+		if (s_button_list[i].id != id) {
+			continue;
+		}
+		s_button_list[i].flex.long_press_start_tick = FLEX_MS_TO_SCAN_CNT(ms);
+		s_button_list[i].flex.long_hold_start_tick = FLEX_MS_TO_SCAN_CNT(ms + 1000U);
+		LOG_INFO("button: id=%u long_press=%u ms", (unsigned)id, (unsigned)ms);
+		return;
+	}
 }
 
 void button_deinit(void)

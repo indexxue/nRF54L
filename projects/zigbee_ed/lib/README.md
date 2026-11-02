@@ -15,7 +15,7 @@
 ```
 lib/
 └── zigbee/                 # Zigbee ED + OnOff Server（本工程私有）
-    ├── zigbee_app.h/.c     # 对外接口：start / steer / leave / evt_fetch
+    ├── zigbee_app.h/.c     # start / steer / leave / evt_fetch；TX 功率 apply
     ├── zigbee_device.h     # 设备/端点声明宏（Basic+Identify+OnOff）
     ├── zb_mem_config_custom.h
     └── zboss_mem_globals.c # ZBOSS RAM 全局（-fno-lto）

@@ -984,6 +984,53 @@ static void cmd_zb(int argc, const char *argv[])
 		return;
 	}
 
+	if (strcmp(argv[1], "pwr") == 0) {
+		if (argc == 2) {
+			(void)snprintk(st, sizeof(st), "%d", (int)zbft_tx_power_get());
+			cmd_reply_ok("zb", st);
+			return;
+		}
+		if (argc == 3) {
+			char *end = NULL;
+			long dbm = strtol(argv[2], &end, 10);
+
+			if ((end == argv[2]) || ((end != NULL) && (*end != '\0'))) {
+				cmd_reply_ng();
+				return;
+			}
+			if ((dbm < -40) || (dbm > 8)) {
+				cmd_reply_ng();
+				return;
+			}
+			if (!zbft_tx_power_set((int8_t)dbm)) {
+				cmd_reply_ok("zb", "ng");
+				return;
+			}
+			(void)snprintk(st, sizeof(st), "%d", (int)zbft_tx_power_get());
+			cmd_reply_ok("zb", st);
+			return;
+		}
+		cmd_reply_ng();
+		return;
+	}
+
+	if (strcmp(argv[1], "rssi") == 0) {
+		int8_t rssi;
+		uint8_t lqi;
+
+		if (argc != 2) {
+			cmd_reply_ng();
+			return;
+		}
+		if (!zbft_rssi_get(&rssi, &lqi)) {
+			cmd_reply_ok("zb", "ng");
+			return;
+		}
+		(void)snprintk(st, sizeof(st), "rssi=%d lqi=%u", (int)rssi, (unsigned)lqi);
+		cmd_reply_ok("zb", st);
+		return;
+	}
+
 	if (strcmp(argv[1], "allow") == 0) {
 		cmd_zb_allow(argc, argv);
 		return;
@@ -995,6 +1042,57 @@ static void cmd_zb(int argc, const char *argv[])
 	}
 
 	cmd_reply_ng();
+}
+
+static void cmd_pwr(int argc, const char *argv[])
+{
+	static char st[32];
+
+	if (argc == 1) {
+		(void)snprintk(st, sizeof(st), "%d", (int)zbft_tx_power_get());
+		cmd_reply_ok("pwr", st);
+		return;
+	}
+	if (argc == 2) {
+		char *end = NULL;
+		long dbm = strtol(argv[1], &end, 10);
+
+		if ((end == argv[1]) || ((end != NULL) && (*end != '\0'))) {
+			cmd_reply_ng();
+			return;
+		}
+		if ((dbm < -40) || (dbm > 8)) {
+			cmd_reply_ng();
+			return;
+		}
+		if (!zbft_tx_power_set((int8_t)dbm)) {
+			cmd_reply_ok("pwr", "ng");
+			return;
+		}
+		(void)snprintk(st, sizeof(st), "%d", (int)zbft_tx_power_get());
+		cmd_reply_ok("pwr", st);
+		return;
+	}
+	cmd_reply_ng();
+}
+
+static void cmd_rssi(int argc, const char *argv[])
+{
+	static char st[40];
+	int8_t rssi;
+	uint8_t lqi;
+
+	(void)argv;
+	if (argc != 1) {
+		cmd_reply_ng();
+		return;
+	}
+	if (!zbft_rssi_get(&rssi, &lqi)) {
+		cmd_reply_ok("rssi", "ng");
+		return;
+	}
+	(void)snprintk(st, sizeof(st), "rssi=%d lqi=%u", (int)rssi, (unsigned)lqi);
+	cmd_reply_ok("rssi", st);
 }
 
 static void cmd_zbcmd(int argc, const char *argv[])
@@ -1084,10 +1182,13 @@ void cmd_register_defaults(void)
 				 "ccfg|lock|unlock; manual; no auto; OTA may lock later");
 	(void)cmd_register("ftmexit", cmd_ftmexit,
 			  "exit factory: boot_mode=app + reboot -> image-0");
+	/* Air-eligible RF helpers (zbcmd pwr|rssi on DUT). */
+	(void)cmd_register("pwr", cmd_pwr, "pwr | pwr <-40..+8>  TX dBm");
+	(void)cmd_register("rssi", cmd_rssi, "peer RSSI/LQI (after traffic)");
 
 	/* Zigbee FTM: UART-only control plane (not air-proxyable). */
 	(void)cmd_register_local("zb", cmd_zb,
-				 "zb tool|uut|status|ch|allow|join <ieee>|join [sec]");
+				 "zb tool|uut|status|ch|pwr|rssi|allow|join");
 	(void)cmd_register_local("zbcmd", cmd_zbcmd, "zbcmd <factory-line> → DUT");
 
 	cmd_invoke_project_register_once();

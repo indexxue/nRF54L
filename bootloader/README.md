@@ -26,7 +26,7 @@ Behavior contract: [`doc/flash_layout.md`](../doc/flash_layout.md).
 | Directory + shared fragments | BLE OTA write / delayed confirm |
 | Dual-slot `pm_static.yml`（含 secondary_app） | `eink_tag` MCUBoot |
 | `boot_share` + `boot_go_hook` | — |
-| **`demo` swap-move Boot** + **`factory` Direct XIP secondary** | 板上 factory→secondary 勾验收 |
+| **`demo` / `zigbee_ed` / `zigbee_router` swap-move** + **`factory` Direct XIP** | 板上 factory→secondary 勾验收 |
 
 ## How an app opts in
 

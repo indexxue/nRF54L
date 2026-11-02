@@ -1,0 +1,13 @@
+# Zigbee ED application options (sourced beside CMakeLists.txt).
+
+config ZIGBEE_APP_TX_POWER
+	int "Zigbee TX power (dBm)"
+	range -40 8
+	default 8
+	help
+	  Transmit power applied to each channel in CONFIG_ZIGBEE_CHANNEL_MASK
+	  after zigbee_enable(). Session is compile-time only (not Settings).
+
+menu "Zephyr Kernel"
+source "Kconfig.zephyr"
+endmenu

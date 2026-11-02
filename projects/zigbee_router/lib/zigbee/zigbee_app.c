@@ -405,10 +405,58 @@ static void zcl_device_cb(zb_bufid_t bufid)
 	}
 }
 
+static void zigbee_app_tx_power_cb(zb_bufid_t param)
+{
+	zb_tx_power_params_t *p = zb_buf_begin(param);
+
+	if (p->status == RET_OK) {
+		printk("zigbee: tx_pwr=%d dBm ch=%u ok\n", (int)p->tx_power,
+		       (unsigned)p->channel);
+	} else {
+		printk("zigbee: tx_pwr set fail ch=%u st=%d\n", (unsigned)p->channel,
+		       (int)p->status);
+	}
+	zb_buf_free(param);
+}
+
+static void zigbee_app_tx_power_apply_cb(zb_bufid_t param, zb_uint16_t channel)
+{
+	zb_tx_power_params_t *p;
+
+	p = zb_buf_initial_alloc(param, sizeof(*p));
+	p->page = ZB_CHANNEL_PAGE0_2_4_GHZ;
+	p->channel = (zb_uint8_t)channel;
+	p->tx_power = (zb_int8_t)CONFIG_ZIGBEE_APP_TX_POWER;
+	p->cb = zigbee_app_tx_power_cb;
+	ZB_SCHEDULE_APP_CALLBACK(zb_set_tx_power_async, param);
+}
+
+/** Apply CONFIG_ZIGBEE_APP_TX_POWER to every channel in the scan mask. */
+static void zigbee_app_tx_power_apply(void)
+{
+	uint32_t mask = CONFIG_ZIGBEE_CHANNEL_MASK;
+	uint8_t ch;
+	zb_ret_t ret;
+
+	printk("zigbee: tx_pwr=%d dBm mask=0x%08x\n", CONFIG_ZIGBEE_APP_TX_POWER,
+	       (unsigned)mask);
+
+	for (ch = ZB_PAGE0_2_4_GHZ_CHANNEL_FROM; ch <= ZB_PAGE0_2_4_GHZ_CHANNEL_TO; ch++) {
+		if ((mask & (1UL << ch)) == 0U) {
+			continue;
+		}
+		ret = zb_buf_get_out_delayed_ext(zigbee_app_tx_power_apply_cb, ch, 0);
+		if (ret != RET_OK) {
+			printk("zigbee: tx_pwr schedule fail ch=%u ret=%d\n", (unsigned)ch,
+			       (int)ret);
+		}
+	}
+}
+
 status_t zigbee_app_start(void)
 {
-	LOG_INF("zigbee: start Router ep=%d mask=0x%08x", ZIGBEE_APP_ENDPOINT,
-		CONFIG_ZIGBEE_CHANNEL_MASK);
+	LOG_INF("zigbee: start Router ep=%d mask=0x%08x pwr=%d", ZIGBEE_APP_ENDPOINT,
+		CONFIG_ZIGBEE_CHANNEL_MASK, CONFIG_ZIGBEE_APP_TX_POWER);
 
 	ZB_ZCL_REGISTER_DEVICE_CB(zcl_device_cb);
 	ZB_AF_REGISTER_DEVICE_CTX(&app_light_ctx);
@@ -428,6 +476,7 @@ status_t zigbee_app_start(void)
 	printk("zigbee: rx_on_when_idle=1 (Router always-on)\n");
 
 	zigbee_enable();
+	zigbee_app_tx_power_apply();
 	k_work_init_delayable(&s_steer_window_work, zigbee_app_steer_window_work_fn);
 	zigbee_app_evt_post_net(ZIGBEE_APP_STATE_IDLE, false);
 	return STATUS_OK;
