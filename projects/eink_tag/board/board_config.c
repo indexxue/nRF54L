@@ -1,14 +1,16 @@
 /**
  * @file board_config.c
- * @brief eink_tag 板级：UART + LED×2 + BTN×2 + SPI00(EPD) + BLE；HFXO + LFCLK RC；NFC 暂关。
+ * @brief eink_tag 板级 rev_b：UART + LED×2 + BTN×2 + SPI00(EPD) + SPI22(PN5180) + BLE。
  *
- * | 资源   | 个数 | 接线                                      |
- * |--------|------|-------------------------------------------|
- * | UART   | 1    | TX=P1.09 RX=P1.10                         |
- * | LED    | 2    | G=P1.05 B=P1.04                           |
- * | BUTTON | 2    | BTN1=P0.00 BTN2=P0.01                     |
- * | SPI    | 1+1  | SCK=P2.01 MOSI=P2.04 CS=P2.05（从机 epd） |
- * | BLE    | 片上 | 2.4G RADIO（BOARD_MASK_BLE）              |
+ * PN5180 冒烟见 source/pn5180_port.c；ADC / IRQ 业务仍未挂。脚表 doc/board_io_rev_b.md。
+ *
+ * | 资源   | 个数 | 接线                                              |
+ * |--------|------|---------------------------------------------------|
+ * | UART   | 1    | TX=P1.04 RX=P1.05                                 |
+ * | LED    | 2    | G=P2.08 B=P2.09                                   |
+ * | BUTTON | 2    | BTN1=P0.00 BTN2=P0.01                             |
+ * | SPI    | 2+2  | spi00→epd；spi22→pn5180                           |
+ * | BLE    | 片上 | 2.4G RADIO（BOARD_MASK_BLE）                      |
  */
 
 #include "board.h"
@@ -25,6 +27,8 @@ static const struct gpio_dt_spec s_btn1 = GPIO_DT_SPEC_GET(ZUSER, btn1_gpios);
 static const struct gpio_dt_spec s_btn2 = GPIO_DT_SPEC_GET(ZUSER, btn2_gpios);
 static const struct gpio_dt_spec s_epd_cs =
 	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(spi00), cs_gpios, 0);
+static const struct gpio_dt_spec s_pn5180_cs =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(spi22), cs_gpios, 0);
 
 static const board_led_spec_t s_leds[] = {
 	{.gpio = &s_led_g, .id = 0U, .name = "led_g"},
@@ -62,6 +66,11 @@ static const board_spi_bus_spec_t s_spi_buses[] = {
 		.bitrate_hz = 4000000U,
 		.name = "spi00",
 	},
+	{
+		.dev = DEVICE_DT_GET(DT_NODELABEL(spi22)),
+		.bitrate_hz = 4000000U,
+		.name = "spi22",
+	},
 };
 
 static const board_spi_slave_spec_t s_spi_slaves[] = {
@@ -71,10 +80,16 @@ static const board_spi_slave_spec_t s_spi_slaves[] = {
 		.bitrate_hz = 4000000U,
 		.name = "epd",
 	},
+	{
+		.bus_index = 1U,
+		.cs = &s_pn5180_cs,
+		.bitrate_hz = 4000000U,
+		.name = "pn5180",
+	},
 };
 
 static const board_config_t s_board = {
-	.name = "eink_tag_rev_a",
+	.name = "eink_tag_rev_b",
 	.mask = BOARD_MASK_UART | BOARD_MASK_LED | BOARD_MASK_BUTTON | BOARD_MASK_SPI |
 		BOARD_MASK_BLE,
 

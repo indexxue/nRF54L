@@ -33,5 +33,6 @@ Framework choices. **P0 closed** (folders + SDK path + build). Flash/hw verify s
 | cbb | Git submodule `cbb/` → `git@github.com:indexxue/cbb.git`（驱动接入仍按需） |
 | CLI | `nrf.cmd` / `nrf.ps1` + `nrf.env` |
 | Setup | Semi-auto `scripts/setup_env.ps1` via nrfutil sdk-manager |
+| Factory Zigbee FTM | **单 hex** 在 `projects/factory`：TOOL(临时 Coord)+UUT(Router)；`zb allow`/`zbcmd` 后门。**量产** `zigbee_ed`/`zigbee_router` **禁止**本机 Coord / 本通道；**禁止**厂测 `_coord`/`_dut` 双产物；**不新建** `zigbee_factory`。详见 [`plan_zigbee_factory_temp_coord.md`](plan_zigbee_factory_temp_coord.md)、[`projects/factory/README.md`](../projects/factory/README.md) |
 
 See [`plan.md`](plan.md) for the living roadmap, [`flash_layout.md`](flash_layout.md) for the address map. Per-app `lib/` detail: `projects/*/lib/README.md`.

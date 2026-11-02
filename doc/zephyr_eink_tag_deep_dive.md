@@ -147,7 +147,7 @@ CONFIG_STACK_SENTINEL=y
 
 | 主题 | 何时做 | 与 `eink_tag` 的关系 |
 |------|--------|----------------------|
-| System workqueue / `k_work` | 想减少「专用线程」时 | NFC 事件已用 work；可评估 LED/轻量事件 |
+| System workqueue / `k_work` | 想减少「专用线程」时 | 可评估 LED/轻量事件；PN5180 读卡勿放 GATT 回调 |
 | 自写 Zephyr driver | 外设要进 upstream 风格或被多 app 复用 | EPD 现走 `cbb` + board hook，一般不必强行 driver 化 |
 | Logging 子系统 | 需要结构化/多后端日志时 | 现用自有 `log.h`，换 Zephyr LOG 要解决宏冲突 |
 | FLPR 卸载刷屏 | 刷屏与 BLE 抢时间且单核优化不够 | 见 [`projects/demo`](../projects/demo/README.md) 双核脚手架；边界切在「平面已在 RAM → SPI 吐屏」 |

@@ -4,10 +4,10 @@
 
 | 功能 | 引脚 / 核 |
 |------|-----------|
-| UART TX / RX（应用核控制台） | P1.09 / P1.10（uart20，115200） |
-| LED0 / LED1 | P1.04 / P1.05（默认 ACTIVE_LOW） |
+| UART TX / RX（应用核控制台） | **P1.04 / P1.05**（uart20，115200） |
+| LED0 / LED1 | **P2.08 / P2.09**（ACTIVE_LOW） |
 | FTM 按键 | P0.00（`BTN_PERMISSION_FTM`；连击 5→4→3→2 进厂测） |
-| 时钟 | `CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC` |
+| 时钟 | LF=内部 RC；**HF=外部 32 MHz HFXO**（`CONFIG_START_REQUEST_HFXO=y`） |
 | **MCUBoot** | 本工程跑在 **image-0 / slot0**；厂测镜像另烧 **image-1** |
 | **FLPR（RISC-V）** | 片内协处理器 `cpuflpr`；镜像存 RRAM `0x165000`，在 SRAM 执行；控制台默认 **uart30** |
 

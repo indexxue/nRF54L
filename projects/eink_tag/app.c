@@ -32,6 +32,7 @@
 #include "led_scene.h"
 #include "log.h"
 #include "nvs.h"
+#include "pn5180_board.h"
 
 #define APP_HB_FLAG_ADV  (1U << 0)
 #define APP_HB_FLAG_CONN (1U << 1)
@@ -39,13 +40,14 @@
 #define APP_LOOP_MS         20U
 #define APP_HB_PERIOD_MS    20000U
 #define APP_HB_PERIOD_TICKS (APP_HB_PERIOD_MS / APP_LOOP_MS)
-/** 可发现窗口：上电/按键唤醒后快广播多久；超时未连接则停广进睡 */
+/** Discoverable adv window after boot/wake; then sleep if no connect */
 #define APP_ADV_WINDOW_MS   30000U
 
 #define APP_EPD_STACK_SIZE  4096
 #define APP_EPD_THREAD_PRIO 8
 #define APP_EPD_JOB_DEMO    1U
 #define APP_EPD_JOB_HOST    2U
+#define APP_EPD_ENABLE      0 /* 临时关墨水屏，专注 PN5180；恢复刷屏改回 1 */
 
 typedef enum {
 	APP_DISP_IDLE = 0,
@@ -73,7 +75,7 @@ static bool s_sleeping;
 
 static void app_epd_led_show(uint8_t panel);
 
-/** 打开/刷新可发现窗口（快广播时段）。 */
+/** 鎵撳紑/鍒锋柊鍙彂鐜扮獥鍙ｏ紙蹇箍鎾椂娈碉級銆?*/
 static void app_adv_window_arm(void)
 {
 	s_adv_deadline_ms = k_uptime_get() + (int64_t)APP_ADV_WINDOW_MS;
@@ -112,6 +114,11 @@ static void app_sleep_enter(void)
 	button_wake_enable();
 	s_sleeping = true;
 	atomic_set(&s_epd_led_applied, 0);
+
+	if (pn5180_board_scan_is_active()) {
+		(void)pn5180_board_scan_stop();
+	}
+
 	LOG_INFO("app: SLEEP enter (adv off, epd sleep, wake=BTN_PERMISSION_WAKE)");
 }
 
@@ -134,7 +141,7 @@ static void app_sleep_exit(void)
 		atomic_set(&s_epd_led_applied, 1);
 	}
 
-	LOG_INFO("app: SLEEP exit → advertising %us window",
+	LOG_INFO("app: SLEEP exit 鈫?advertising %us window",
 		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U));
 }
 
@@ -143,10 +150,8 @@ static bool app_sleep_can_enter(void)
 	if (s_sleeping) {
 		return false;
 	}
+#if APP_EPD_ENABLE
 	if (atomic_get(&s_epd_ready) == 0) {
-		return false;
-	}
-	if (ble_is_connected()) {
 		return false;
 	}
 	if (epd_board_is_busy()) {
@@ -158,7 +163,14 @@ static bool app_sleep_can_enter(void)
 	if (k_msgq_num_used_get(&s_epd_jobs) != 0U) {
 		return false;
 	}
-	/* 广播窗口未到：保持可发现 */
+#endif
+	if (ble_is_connected()) {
+		return false;
+	}
+	if (pn5180_board_scan_is_active()) {
+		return false;
+	}
+	/* 骞挎挱绐楀彛鏈埌锛氫繚鎸佸彲鍙戠幇 */
 	if (k_uptime_get() < s_adv_deadline_ms) {
 		return false;
 	}
@@ -176,7 +188,7 @@ static void app_ble_evt_cb(const ble_evt_t *evt, void *user)
 	if (evt->id == BLE_EVT_CONNECTED) {
 		event_set(EVT_ID_BLE_GAP);
 	} else if (evt->id == BLE_EVT_DISCONNECTED) {
-		/* 断连后 recycled 会再广播；再等 ADV_WINDOW 才进睡，便于用户重连 */
+		/* Restart adv after disconnect; ADV_WINDOW then sleep */
 		app_adv_window_arm();
 		event_set(EVT_ID_BLE_GAP);
 	}
@@ -190,10 +202,10 @@ static void app_epd_led_show(uint8_t panel)
 
 	if (panel == NVS_EPD_PANEL_4IN2) {
 		led_scene_run(LED_SCENE_ID_EPD_4IN2);
-		LOG_INFO("app: LED → 4.2in (blue solid)");
+		LOG_INFO("app: LED 鈫?4.2in (blue solid)");
 	} else {
 		led_scene_run(LED_SCENE_ID_EPD_2IN9);
-		LOG_INFO("app: LED → 2.9in (green solid)");
+		LOG_INFO("app: LED 鈫?2.9in (green solid)");
 	}
 }
 
@@ -219,7 +231,7 @@ static void app_epd_panel_switch(uint8_t panel)
 		return;
 	}
 
-	LOG_INFO("app: epd panel → %s saved, reboot",
+	LOG_INFO("app: epd panel 鈫?%s saved, reboot",
 		 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
 	k_msleep(500);
 	sys_reboot(SYS_REBOOT_COLD);
@@ -229,6 +241,7 @@ static void app_handle_button(void)
 {
 	btn_id_e id;
 	btn_event_e ev;
+	status_t st;
 
 	if (!event_is_set(EVT_ID_BUTTON)) {
 		return;
@@ -239,16 +252,32 @@ static void app_handle_button(void)
 	event_clear(EVT_ID_BUTTON);
 	button_last_event_clear();
 
-	/* BTN1=CONFIRM：双击→4.2"，长按10s→2.9"；带 WAKE 权限的键可从睡眠唤醒并开广播 */
+	/* BTN2=BACK 鍗曞嚮锛歅N5180 鎵崱寮€/鍏?*/
+	if ((id == BTN_ID_BACK) && (ev == BTN_EVENT_SINGLE_CLICK)) {
+		if (!pn5180_board_is_ready()) {
+			LOG_WARN("app: BTN2 scan ignored (pn5180 not ready)");
+			return;
+		}
+		if (pn5180_board_scan_is_active()) {
+			st = pn5180_board_scan_stop();
+			LOG_INFO("app: BTN2 鈫?scan stop st=%d", (int)st);
+		} else {
+			st = pn5180_board_scan_start();
+			LOG_INFO("app: BTN2 鈫?scan start st=%d", (int)st);
+		}
+		return;
+	}
+
+	/* BTN1=CONFIRM锛氬弻鍑烩啋4.2"锛岄暱鎸?0s鈫?.9"锛涘甫 WAKE 鏉冮檺鐨勯敭鍙粠鐫＄湢鍞ら啋骞跺紑骞挎挱 */
 	if (id != BTN_ID_CONFIRM) {
 		return;
 	}
 
 	if (ev == BTN_EVENT_DOUBLE_CLICK) {
-		LOG_INFO("app: BTN double → 4.2in");
+		LOG_INFO("app: BTN double 鈫?4.2in");
 		app_epd_panel_switch(NVS_EPD_PANEL_4IN2);
 	} else if (ev == BTN_EVENT_LONG_PRESS) {
-		LOG_INFO("app: BTN long → 2.9in");
+		LOG_INFO("app: BTN long 鈫?2.9in");
 		app_epd_panel_switch(NVS_EPD_PANEL_2IN9);
 	}
 }
@@ -302,11 +331,11 @@ static status_t app_disp_handle_begin(const uint8_t *payload, uint16_t plen)
 		return STATUS_INVALID_ARG;
 	}
 	if (atomic_get(&s_epd_ready) == 0) {
-		LOG_WARN("app: BEGIN rejected — EPD not ready yet (wait for 'epd: ready')");
+		LOG_WARN("app: BEGIN rejected 鈥?EPD not ready yet (wait for 'epd: ready')");
 		return STATUS_INVALID_STATE;
 	}
 	if (epd_board_is_busy()) {
-		LOG_WARN("app: BEGIN rejected — EPD busy (refresh in progress)");
+		LOG_WARN("app: BEGIN rejected 鈥?EPD busy (refresh in progress)");
 		return STATUS_INVALID_STATE;
 	}
 
@@ -466,7 +495,7 @@ static status_t app_disp_handle_refresh(uint16_t plen)
 		return st;
 	}
 
-	/* 入队前已 lock，刷完由 worker 内 refresh 解锁 */
+	/* 鍏ラ槦鍓嶅凡 lock锛屽埛瀹岀敱 worker 鍐?refresh 瑙ｉ攣 */
 	st = app_epd_queue_job(APP_EPD_JOB_HOST);
 	app_disp_reset();
 	if (st == STATUS_OK) {
@@ -492,7 +521,7 @@ static void app_handle_ble_cmds(void)
 	status_t st;
 
 	while (ble_cmd_fetch(&msg)) {
-		/* 业务活动不延长可发现窗口；仅连接中有效 */
+		/* 涓氬姟娲诲姩涓嶅欢闀垮彲鍙戠幇绐楀彛锛涗粎杩炴帴涓湁鏁?*/
 		LOG_INFO("app: CMD recv id=%u plen=%u", (unsigned int)msg.cmd_id,
 			 (unsigned int)msg.payload_len);
 
@@ -503,7 +532,7 @@ static void app_handle_ble_cmds(void)
 			break;
 
 		case BLE_CMD_DISPLAY:
-			LOG_INFO("app: DISPLAY → queue demo refresh");
+			LOG_INFO("app: DISPLAY 鈫?queue demo refresh");
 			st = app_epd_queue_job(APP_EPD_JOB_DEMO);
 			app_ack(BLE_CMD_DISPLAY, st);
 			break;
@@ -592,9 +621,9 @@ static void app_epd_worker(void *p1, void *p2, void *p3)
 		return;
 	}
 
-	/* 上电不跑 demo；DISPLAY(2001) / Host BEGIN→REFRESH 再刷 */
+	/* 涓婄數涓嶈窇 demo锛汥ISPLAY(2001) / Host BEGIN鈫扲EFRESH 鍐嶅埛 */
 	atomic_set(&s_epd_ready, 1);
-	LOG_INFO("epd: ready board=%ux%u plane=%u — DISPLAY=demo | BEGIN/CHUNK/REFRESH",
+	LOG_INFO("epd: ready board=%ux%u plane=%u 鈥?DISPLAY=demo | BEGIN/CHUNK/REFRESH",
 		 (unsigned)epd_board_width(), (unsigned)epd_board_height(),
 		 (unsigned)epd_board_plane_size());
 
@@ -649,16 +678,17 @@ status_t app_init(void)
 	status_t st;
 	uint8_t panel;
 
-	LOG_INFO("pins UART P1.09/P1.10 | LED_G P1.05 LED_B P1.04 | BTN P0.00/P0.01");
-	LOG_INFO("epd SPI00 SCK=P2.01 MOSI=P2.04 CS=P2.05 | DC=P1.08 RST=P1.07 BUSY=P1.06");
+	LOG_INFO("pins UART P1.04/P1.05 | LED_G P2.08 LED_B P2.09 | BTN P0.00/P0.01");
+	LOG_INFO("epd SPI00 SCK=P2.01 MOSI=P2.02 CS=P2.05 | DC=P2.00 RST=P2.03 BUSY=P2.07");
+	LOG_INFO("pn5180 SPI22 SCK=P1.11 MOSI=P1.12 MISO=P1.13 NSS=P1.14 | BUSY=P1.08 RST=P1.07");
 
-	/* 上电保持 BOOTUP 绿/蓝交替闪；EPD ready 后再切尺寸常亮 */
+	/* Keep BOOTUP G/B blink until EPD ready, then solid size LED */
 	panel = nvs_epd_panel_get();
-	LOG_INFO("app: NVS epanel=%u (%s) — dbl=4.2in long10s=2.9in", (unsigned)panel,
+	LOG_INFO("app: NVS epanel=%u (%s) -- dbl=4.2in long10s=2.9in", (unsigned)panel,
 		 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
 
 	ble_evt_set_callback(app_ble_evt_cb, NULL);
-	/* 断连后自动再广播，由 ADV_WINDOW 超时后再停广进睡 */
+	/* 鏂繛鍚庤嚜鍔ㄥ啀骞挎挱锛岀敱 ADV_WINDOW 瓒呮椂鍚庡啀鍋滃箍杩涚潯 */
 	ble_adv_set_restart_on_disconnect(true);
 	app_adv_window_arm();
 
@@ -668,10 +698,27 @@ status_t app_init(void)
 		return STATUS_FAIL;
 	}
 
+#if APP_EPD_ENABLE
 	st = app_epd_start_async();
 	if (st != STATUS_OK) {
 		(void)ble_stop();
 		return STATUS_FAIL;
+	}
+#else
+	LOG_INFO("app: EPD init skipped (APP_EPD_ENABLE=0)");
+#endif
+
+	/* PN5180: SPI smoke + scan thread; BTN2 click toggles scan */
+	st = pn5180_board_smoke();
+	if (st != STATUS_OK) {
+		LOG_ERROR("pn5180_board_smoke failed: %d (SPI/鎺ョ嚎/渚涚數?)", (int)st);
+	} else {
+		st = pn5180_board_scan_init();
+		if (st != STATUS_OK) {
+			LOG_ERROR("pn5180_board_scan_init failed: %d", (int)st);
+		} else {
+			LOG_INFO("app: BTN2(P0.01) single-click = PN5180 scan toggle");
+		}
 	}
 
 	return STATUS_OK;
@@ -683,8 +730,8 @@ void app_run(void)
 
 	LOG_INFO("eink_tag run: PING | DISPLAY=demo | BEGIN/CHUNK/REFRESH | HB=%us",
 		 (unsigned int)(APP_HB_PERIOD_MS / 1000U));
-	LOG_INFO("eink_tag btn: CONFIRM dbl→4.2in | long10s→2.9in (NVS+reboot)");
-	LOG_INFO("eink_tag sleep: adv window %us; disc→re-adv %us then sleep; wake=WAKE btn",
+	LOG_INFO("eink_tag btn: CONFIRM dbl->4.2in | long10s->2.9in | BACK click->NFC scan");
+	LOG_INFO("eink_tag sleep: adv window %us; disc->re-adv %us then sleep; wake=WAKE btn",
 		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U),
 		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U));
 
@@ -694,7 +741,7 @@ void app_run(void)
 	while (1) {
 		start_poll();
 
-		/* EPD init 完：关双灯交替，切对应尺寸单灯常亮 */
+		/* After EPD ready: cancel boot blink, show size LED */
 		if ((atomic_get(&s_epd_ready) != 0) && (atomic_cas(&s_epd_led_applied, 0, 1))) {
 			app_epd_led_show(epd_board_size());
 		}
@@ -702,7 +749,7 @@ void app_run(void)
 		app_handle_button();
 
 		if (event_is_set(EVT_ID_BLE_GAP)) {
-			/* connect/disconnect 已在回调里改窗口；此处仅清位 */
+			/* connect/disconnect 宸插湪鍥炶皟閲屾敼绐楀彛锛涙澶勪粎娓呬綅 */
 		}
 
 		if (event_is_set(EVT_ID_BLE_CMD)) {
@@ -711,11 +758,11 @@ void app_run(void)
 
 		if ((tick % APP_HB_PERIOD_TICKS) == 0U) {
 			LOG_INFO("status tick=%u adv=%d conn=%d sleep=%d epd_ready=%d "
-				 "epd_busy=%d epd_asl=%d size=%s",
+				 "epd_busy=%d nfc_scan=%d size=%s",
 				 tick / APP_HB_PERIOD_TICKS, ble_is_advertising() ? 1 : 0,
 				 ble_is_connected() ? 1 : 0, s_sleeping ? 1 : 0,
 				 (int)atomic_get(&s_epd_ready), epd_board_is_busy() ? 1 : 0,
-				 epd_board_is_asleep() ? 1 : 0,
+				 pn5180_board_scan_is_active() ? 1 : 0,
 				 (epd_board_size() == EPD_BOARD_SIZE_4IN2) ? "4.2in" : "2.9in");
 			app_ble_heartbeat_try(tick / APP_HB_PERIOD_TICKS);
 		}
@@ -731,3 +778,4 @@ void app_run(void)
 		k_sleep(K_MSEC(APP_LOOP_MS));
 	}
 }
+

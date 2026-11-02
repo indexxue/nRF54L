@@ -40,8 +40,8 @@
 #define EPD_USE_BITBANG 1
 #endif
 
-#define EPD_SCK_PIN  1U
-#define EPD_MOSI_PIN 4U
+#define EPD_SCK_PIN  1U /* P2.01 */
+#define EPD_MOSI_PIN 2U /* P2.02；rev_b（原 rev_a 为 P2.04） */
 
 static const struct gpio_dt_spec s_dc = GPIO_DT_SPEC_GET(ZUSER, epd_dc_gpios);
 static const struct gpio_dt_spec s_rst = GPIO_DT_SPEC_GET(ZUSER, epd_rst_gpios);

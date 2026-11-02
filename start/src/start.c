@@ -85,10 +85,6 @@ status_t start_boot(void)
 	board = board_config_get();
 	LOG_INFO("start ver=%s product=%s board=%s", version_get_string(),
 		 device_profile_product()->name, board->name);
-	LOG_INFO("mask=0x%x uart=%u led=%u btn=%u spi=%u/%u ble=%d nfc=%d",
-		 board->mask, board_uart_count(), board_led_count(), board_button_count(),
-		 board_spi_bus_count(), board_spi_slave_count(),
-		 board_wants(BOARD_MASK_BLE) ? 1 : 0, board_wants(BOARD_MASK_NFC) ? 1 : 0);
 
 	if (board_wants(BOARD_MASK_LED)) {
 		led_scene_run(LED_SCENE_ID_BOOTUP);
@@ -96,9 +92,7 @@ status_t start_boot(void)
 
 	if (board_wants(BOARD_MASK_BUTTON)) {
 		st = button_init(button_log_notify);
-		if (st == STATUS_OK) {
-			LOG_INFO("button ready");
-		} else if (st != STATUS_NOT_SUPPORTED) {
+		if ((st != STATUS_OK) && (st != STATUS_NOT_SUPPORTED)) {
 			LOG_WARN("button_init failed: %d", (int)st);
 		}
 	}

@@ -1,13 +1,19 @@
 /*
- * eink_tag — 硬件接线（LFCLK=内部 RC；HFCLK=外部 32 MHz HFXO；BLE 开；NFCT 暂关）
+ * eink_tag — 硬件接线 rev_b（LFCLK=内部 RC；HFCLK=外部 32 MHz HFXO；BLE 开）
  *
- * UART20: TX=P1.09  RX=P1.10  @ 115200
- * LED_G:  P1.05   LED_B: P1.04  (ACTIVE_LOW)
+ * 自有 PCB 脚表；勿烧到现网冒烟板（rev_a）。
+ * 整表见 doc/board_io_rev_b.md
+ *
+ * UART20: TX=P1.04  RX=P1.05  @ 115200
+ * LED_G:  P2.08   LED_B: P2.09  (ACTIVE_LOW)
  * BTN1:   P0.00   BTN2:  P0.01  (ACTIVE_LOW)
- * EPD SPI00: SCK=P2.01  MOSI=P2.04  CS=P2.05
- * EPD GPIO:  DC=P1.08   RST=P1.07   BUSY=P1.06
- * HFXO:   外部 32 MHz 晶振；片内负载电容 15 pF
- * NFCT:   暂关（NFC1=P1.02 NFC2=P1.03 硬件可保留）
+ * EPD SPI00: SCK=P2.01  MOSI=P2.02  MISO=P2.04  CS=P2.05
+ * EPD GPIO:  DC=P2.00   RST=P2.03   BUSY=P2.07
+ * PN5180 SPI22: SCK=P1.11 MOSI=P1.12 MISO=P1.13 NSS=P1.14
+ * PN5180 GPIO:  IRQ=P0.02 BUSY=P1.08 RST=P1.07（常供电，无 PWR_ON）
+ * ADC:    P1.06 AIN2（预留；本阶段不挂业务）
+ * HFXO:   外部 32 MHz；片内负载 15 pF
+ * P1.00/01：预留 LFXO（默认 NC）；P1.02/03：原 NFCT，仅数字备用
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -16,28 +22,28 @@
 &pinctrl {
 	uart20_default: uart20_default {
 		group1 {
-			psels = <NRF_PSEL(UART_TX, 1, 9)>;
+			psels = <NRF_PSEL(UART_TX, 1, 4)>;
 		};
 		group2 {
-			psels = <NRF_PSEL(UART_RX, 1, 10)>;
+			psels = <NRF_PSEL(UART_RX, 1, 5)>;
 			bias-pull-up;
 		};
 	};
 
 	uart20_sleep: uart20_sleep {
 		group1 {
-			psels = <NRF_PSEL(UART_TX, 1, 9)>,
-				<NRF_PSEL(UART_RX, 1, 10)>;
+			psels = <NRF_PSEL(UART_TX, 1, 4)>,
+				<NRF_PSEL(UART_RX, 1, 5)>;
 			low-power-enable;
 		};
 	};
 
-	/* SCK=P2.01 MOSI=P2.04；MISO 闲置 P2.02（写屏不用）。bitbang 时会 sleep 掉本组 */
+	/* EPD：SCK=P2.01 MOSI=P2.02 MISO=P2.04。bitbang 时会 sleep 掉本组 */
 	spi00_default: spi00_default {
 		group1 {
 			psels = <NRF_PSEL(SPIM_SCK, 2, 1)>,
-				<NRF_PSEL(SPIM_MOSI, 2, 4)>,
-				<NRF_PSEL(SPIM_MISO, 2, 2)>;
+				<NRF_PSEL(SPIM_MOSI, 2, 2)>,
+				<NRF_PSEL(SPIM_MISO, 2, 4)>;
 			nordic,drive-mode = <NRF_DRIVE_E0E1>;
 		};
 	};
@@ -45,8 +51,26 @@
 	spi00_sleep: spi00_sleep {
 		group1 {
 			psels = <NRF_PSEL(SPIM_SCK, 2, 1)>,
-				<NRF_PSEL(SPIM_MOSI, 2, 4)>,
-				<NRF_PSEL(SPIM_MISO, 2, 2)>;
+				<NRF_PSEL(SPIM_MOSI, 2, 2)>,
+				<NRF_PSEL(SPIM_MISO, 2, 4)>;
+			low-power-enable;
+		};
+	};
+
+	/* PN5180：SCK 必须为 P1 clock pin（P1.11） */
+	spi22_default: spi22_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 11)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 12)>,
+				<NRF_PSEL(SPIM_MISO, 1, 13)>;
+		};
+	};
+
+	spi22_sleep: spi22_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 11)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 12)>,
+				<NRF_PSEL(SPIM_MISO, 1, 13)>;
 			low-power-enable;
 		};
 	};
@@ -60,7 +84,7 @@
 	pinctrl-names = "default", "sleep";
 };
 
-/* 复用 DK spi00：CS=P2.05，关掉板载 MX25 NOR */
+/* EPD：CS=P2.05；关掉 DK 板载 MX25 NOR */
 &spi00 {
 	status = "okay";
 	cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
@@ -69,11 +93,19 @@
 	pinctrl-names = "default", "sleep";
 };
 
+&spi22 {
+	status = "okay";
+	cs-gpios = <&gpio1 14 GPIO_ACTIVE_LOW>;
+	pinctrl-0 = <&spi22_default>;
+	pinctrl-1 = <&spi22_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
 &mx25r64 {
 	status = "disabled";
 };
 
-/* DK PWM LED 占用 P1.10，与 UART RX 冲突 */
+/* DK 默认外设：自有板脚已重排，关掉易冲突节点 */
 &pwm20 {
 	status = "disabled";
 };
@@ -82,20 +114,19 @@
 	status = "disabled";
 };
 
-/* DK button1 占用 P1.09，与 UART TX 冲突 */
 &button1 {
 	status = "disabled";
 };
 
 /* led_scene：index0=R→LED_G，index1=B→LED_B */
 &led0 {
-	gpios = <&gpio1 5 GPIO_ACTIVE_LOW>;
-	label = "LED_G P1.05";
+	gpios = <&gpio2 8 GPIO_ACTIVE_LOW>;
+	label = "LED_G P2.08";
 };
 
 &led1 {
-	gpios = <&gpio1 4 GPIO_ACTIVE_LOW>;
-	label = "LED_B P1.04";
+	gpios = <&gpio2 9 GPIO_ACTIVE_LOW>;
+	label = "LED_B P2.09";
 };
 
 &led2 {
@@ -106,25 +137,44 @@
 	status = "disabled";
 };
 
-/* 片上 NFCT 暂关（源码保留；需要时再改 okay） */
+/* 本工程不用片上 NFCT Tag；读卡只走外挂 PN5180 */
 &nfct {
 	status = "disabled";
 };
 
-/* 外部 32 MHz HFXO；启动时由 app 请求并保持（见 app.c） */
+/* 外部 32 MHz HFXO；片内负载 15 pF；CONFIG_START_REQUEST_HFXO=y 强起 */
 &hfxo {
 	status = "okay";
 	load-capacitors = "internal";
-	load-capacitance-femtofarad = <15000>;
+	/* 自制板无外挂电容：15pF 常温难起 → 17pF（与 zigbee_demo 对齐） */
+	load-capacitance-femtofarad = <17000>;
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
 };
 
 / {
 	zephyr,user {
-		btn1-gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;
-		btn2-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+		/* 与 demo 一致：ACTIVE_LOW + 内部上拉；无上拉时浮空易误触双击→冷重启 */
+		btn1-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		btn2-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 
-		epd-dc-gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
-		epd-rst-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
-		epd-busy-gpios = <&gpio1 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+		epd-dc-gpios = <&gpio2 0 GPIO_ACTIVE_HIGH>;
+		epd-rst-gpios = <&gpio2 3 GPIO_ACTIVE_HIGH>;
+		epd-busy-gpios = <&gpio2 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+
+		/* PN5180 GPIO 仅 DT 登记；IRQ/BUSY 业务阶段再挂 */
+		pn5180-busy-gpios = <&gpio1 8 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+		pn5180-irq-gpios = <&gpio0 2 GPIO_ACTIVE_LOW>;
+		pn5180-rst-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;
 	};
 };

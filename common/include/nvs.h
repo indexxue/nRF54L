@@ -70,8 +70,9 @@ extern "C" {
 #define NVS_APP_VERSION_SIZE 24
 #define NVS_FACTORY_VERSION_SIZE 24
 
+/** 仅极端兜底；正常首启用 FICR device_id（与 Zigbee IEEE 同源）或随机 */
 #define NVS_DEFAULT_MAC \
-	{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 }
+	{ 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
 /** 首启无 Settings 时：前缀 + 8 hex 随机（共 12 字符），写入后不再改 */
 #define NVS_SN_PREFIX "T90M"
 #define NVS_SN_PREFIX_LEN 4
@@ -148,7 +149,7 @@ uint8_t nvs_boot_mode_get(void);
 bool nvs_epd_panel_set(uint8_t panel);
 uint8_t nvs_epd_panel_get(void);
 
-/** 上电后打印 NVS 缓存摘要（MAC/SN/did/hid/版本等）。 */
+/** 上电一行摘要：sn / mac(连续hex) / bmode / app / build。 */
 void nvs_log_boot_dump(void);
 
 #ifdef __cplusplus

@@ -28,7 +28,7 @@ Zephyr packaging lives under [`../modules/nrf54_common`](../modules/nrf54_common
 
 - SoC 射频：`BOARD_MASK_BLE` / `BOARD_MASK_NFC`（片上 NFCT，**不是** SPI 从机）
 - 片外模组（如 EPD）→ `projects/<name>/source/`，挂 SPI/I2C
-- 对照：[`demo`](../projects/demo)（UART×1 LED×2）vs [`eink_tag`](../projects/eink_tag)（UART×1 SPI从机×1 EPD + BLE + NFCT）
+- 对照：[`demo`](../projects/demo)（UART×1 LED×2）vs [`eink_tag`](../projects/eink_tag)（UART×1 SPI×2 EPD+PN5180 登记 + BLE）
 - SPI：**总线** `spi_bus_count` 与 **从机** `spi_slave_count`（CS）分开计数；中断线用 `irq_count`
 - 按键：`button_init()` + 周期 `button_schedule()`（默认 20ms）
 - FTM 跳槽：键带 `BTN_PERMISSION_FTM` 即可；`start_poll()` → `button_ftm_seq_poll()`（连击 5→4→3→2）

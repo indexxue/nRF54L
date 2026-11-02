@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+source "$(ZEPHYR_BASE)/share/sysbuild/Kconfig"
+
+config REMOTE_BOARD
+	string "Board target for the RISC-V FLPR (remote) image"
+	default "nrf54l15dk/nrf54l15/cpuflpr" if $(BOARD) = "nrf54l15dk"
+	help
+	  FLPR is the nRF54L15 on-chip RISC-V co-processor (cpuflpr).
+	  Application core remains Cortex-M33 (cpuapp).

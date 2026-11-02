@@ -1,24 +1,31 @@
 # eink_tag
 
-通过 **片上 NFC（NFCT）或 BLE** 刷墨水屏标签（后续）。  
-**当前冒烟**：HFXO + UART + LED + 按键 + **BLE 广播/CMD** + **2.9"/4.2" BWR EPD**。NFC 暂关。
+通过 **BLE** 刷墨水屏标签；读卡走外挂 **PN5180**。  
+新板整脚见 [`doc/board_io_rev_b.md`](doc/board_io_rev_b.md)（既有外设重排 + PN5180）。  
+**当前冒烟**：外部 **HFXO** + UART/LED/按键（rev_b）+ **BLE** + **2.9"/4.2" BWR EPD**。  
+注意：`CONFIG_START_REQUEST_HFXO=y`；晶振未起振会卡在 `nvs dump` 后无灯无日志。
 
-平台起机：[`start/`](../../start/)（`CONFIG_START_REQUEST_HFXO=y`）。本工程根目录 `app.c` 只做 BLE + EPD。
+平台起机：[`start/`](../../start/)。本工程根目录 `app.c` 只做 BLE + EPD。
 
-## 当前接线
+## 当前接线（rev_b）
+
+整表与硬件说明见 [`doc/board_io_rev_b.md`](doc/board_io_rev_b.md)。**勿烧到现网冒烟板（rev_a）**。
 
 | 功能 | 引脚 |
 |------|------|
-| UART TX / RX | **P1.09** / **P1.10** |
-| LED_G / LED_B | **P1.05** / **P1.04**（ACTIVE_LOW） |
+| UART TX / RX | **P1.04** / **P1.05** |
+| LED_G / LED_B | **P2.08** / **P2.09**（ACTIVE_LOW） |
 | BTN1 / BTN2 | **P0.00** / **P0.01**（ACTIVE_LOW） |
-| EPD SCK / MOSI / CS | **P2.01** / **P2.04** / **P2.05**（SPI00） |
-| EPD DC / RST / BUSY | **P1.08** / **P1.07** / **P1.06** |
+| EPD SCK / MOSI / MISO / CS | **P2.01** / **P2.02** / **P2.04** / **P2.05**（SPI00） |
+| EPD DC / RST / BUSY | **P2.00** / **P2.03** / **P2.07** |
+| PN5180 SCK/MOSI/MISO/NSS | **P1.11** / **P1.12** / **P1.13** / **P1.14**（SPI22；业务后接） |
+| PN5180 IRQ / BUSY / RST | **P0.02** / **P1.08** / **P1.07**（DT 已登记） |
+| ADC AIN2 | **P1.06**（预留） |
 | BLE 2.4G | 片上 RADIO（设备名 `eink_tag`） |
 | HFCLK | 外部 **32 MHz HFXO** |
 | LFCLK | 内部 RC |
 
-`board` mask：`UART | LED | BUTTON | SPI | BLE`
+`board` mask：`UART | LED | BUTTON | SPI | BLE`（IRQ/ADC 业务阶段再挂）
 
 ## 面板尺寸切换（BTN1 / CONFIRM）
 

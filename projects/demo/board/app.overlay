@@ -1,11 +1,10 @@
 /*
- * demo — TY rev_a pin map (borrow nrf54l15dk SoC target until custom board exists).
+ * demo — 最小冒烟脚表（对齐自有板 UART/LED；与 board_io_rev_b 一致）
  *
- * UART20 console: TX=P1.09  RX=P1.10  @ 115200
- * LED0=P1.04  LED1=P1.05  (GPIO_ACTIVE_LOW；若常亮/不亮可改 ACTIVE_HIGH)
+ * UART20 console: TX=P1.04  RX=P1.05  @ 115200
+ * LED0=P2.08  LED1=P2.09  (GPIO_ACTIVE_LOW)
  * FTM 按键：P0.00 ACTIVE_LOW + PULL_UP（BTN_PERMISSION_FTM）
- * LFCLK: 工程 prj.conf 使用 RC（内部），不依赖外部 32k 晶振
- * HF: 无 BLE 时走内部 HFINT，不强制起 HFXO
+ * LFCLK: 内部 RC；HFCLK: 外部 32 MHz HFXO（CONFIG_START_REQUEST_HFXO）
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -14,18 +13,18 @@
 &pinctrl {
 	uart20_default: uart20_default {
 		group1 {
-			psels = <NRF_PSEL(UART_TX, 1, 9)>;
+			psels = <NRF_PSEL(UART_TX, 1, 4)>;
 		};
 		group2 {
-			psels = <NRF_PSEL(UART_RX, 1, 10)>;
+			psels = <NRF_PSEL(UART_RX, 1, 5)>;
 			bias-pull-up;
 		};
 	};
 
 	uart20_sleep: uart20_sleep {
 		group1 {
-			psels = <NRF_PSEL(UART_TX, 1, 9)>,
-				<NRF_PSEL(UART_RX, 1, 10)>;
+			psels = <NRF_PSEL(UART_TX, 1, 4)>,
+				<NRF_PSEL(UART_RX, 1, 5)>;
 			low-power-enable;
 		};
 	};
@@ -39,7 +38,7 @@
 	pinctrl-names = "default", "sleep";
 };
 
-/* DK 默认 PWM LED 占用 P1.10，与 UART RX 冲突 */
+/* DK 默认外设关掉，避免占脚 */
 &pwm20 {
 	status = "disabled";
 };
@@ -48,19 +47,18 @@
 	status = "disabled";
 };
 
-/* DK button1 占用 P1.09，与 UART TX 冲突 */
 &button1 {
 	status = "disabled";
 };
 
 &led0 {
-	gpios = <&gpio1 4 GPIO_ACTIVE_LOW>;
-	label = "LED0 P1.04";
+	gpios = <&gpio2 8 GPIO_ACTIVE_LOW>;
+	label = "LED0 P2.08";
 };
 
 &led1 {
-	gpios = <&gpio1 5 GPIO_ACTIVE_LOW>;
-	label = "LED1 P1.05";
+	gpios = <&gpio2 9 GPIO_ACTIVE_LOW>;
+	label = "LED1 P2.09";
 };
 
 &led2 {
@@ -71,8 +69,20 @@
 	status = "disabled";
 };
 
+/* 外部 32 MHz HFXO；片内负载 15 pF；start_boot 请求并保持 */
+&hfxo {
+	status = "okay";
+	load-capacitors = "internal";
+	/* 自制板无外挂电容：与 zigbee_demo 对齐内部 17pF */
+	load-capacitance-femtofarad = <17000>;
+};
+
 /* FTM 跳槽：P0.00 低有效，内部上拉 */
 &gpio0 {
+	status = "okay";
+};
+
+&gpio2 {
 	status = "okay";
 };
 

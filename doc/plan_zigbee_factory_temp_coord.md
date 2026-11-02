@@ -46,7 +46,7 @@ TOOL↔UUT 切换：写 req + wipe + 冷复位（唯一需要复位的角色路�
 - 发布两套厂测固件产物（Coord / DUT 分包）  
 - 新建独立 `projects/zigbee_factory`（已否决；共用 `factory`）  
 - 信道自适应 / 自动避让  
-- 本期实现 Router DUT（列入后续）  
+- 真 ED-UUT（单 hex 已用 Router-UUT；另库再议）  
 - 本期强制走量产整包 hex（现阶段按现有 factory 烧录流程即可）
 
 ## 已对齐决策
@@ -130,15 +130,16 @@ TOOL↔UUT 切换：写 req + wipe + 冷复位（唯一需要复位的角色路�
 | `log` | 要 | **要** | DUT 打一条 log，Coord 回 `ok`/`ng` |
 | `reboot` | 要 | **要** | 远端复位；清的是 DUT 临时网，Settings 保留 |
 | `ftmexit` | 要 | **要** | boot_mode=app + 复位 |
-| `zb` | 要 | **要** | 收束：`zb coord\|dut\|status\|ch\|allow\|join`（S0=`todo`） |
-| `zbcmd` | 要 | **要** | `zbcmd <factory-line>` 空中代理（S0=`todo`） |
+| `zb` | 要 | **要** | `zb tool\|uut\|status\|ch\|allow\|join`（别名 coord/dut；`[local]`） |
+| `zbcmd` | 要 | **要** | `zbcmd <factory-line>` 空中代理（`[local]`；已实现） |
 | 后续 `cmd_register` 的厂测命令 | 要 | **默认要** | 确不可远程的须 `cmd_register_local` |
 
-实现倾向（M3）：
+实现（M3 已落地）：
 
-- DUT：厂商/自定义 cluster（或单命令包）执行「命令行字符串 → 与本地 `cmd_process_line` 同路径」→ 回传 `ok`/`ng`/value。  
-- Coord：`zbcmd <line>`（或 `zb <factory-cmd>...`）把整行打到 DUT，串口打印远端回复。  
-- 禁止维护两套命令语义；空中只是传输，解析执行复用同一 `cmd` 表。
+- 自定义 ZCL cluster `0xBEEF`：REQ=命令行字符串，RSP=回包。  
+- UUT：`k_work` → `cmd_process_line_remote`（与本地同表）→ 回传。  
+- TOOL：`zbcmd <line>` 发往已 allow+joined 的唯一 DUT；串口 `zbcmd:<远端回复>`。  
+- 禁止第二套命令语义。
 
 ## 实现逻辑图（供评审）
 
@@ -147,36 +148,35 @@ TOOL↔UUT 切换：写 req + wipe + 冷复位（唯一需要复位的角色路�
 ### 0. 操作总览（现场怎么做）
 
 ```text
-准备：两台烧同一 factory hex（现阶段按 factory 烧录流程）
+准备：两台烧同一 factory hex（.\nrf.cmd -Project factory flash → slot1）
 
   ① 两侧上电
-       → 只清 Zigbee 网 NV；Settings(sn/…)保留；mode=IDLE
+       → 只清 Zigbee 网 NV；Settings(sn/…)保留；mode=idle（无 RF）
+       → zbft: net wipe boot / zbft: settings kept
 
-  ②（可选）两侧：zb ch <ch>          // 默认 15；不做自适应
+  ②（可选）两侧：zb ch <ch>          // 默认 15；须在起栈前；不做自适应
 
-  ③ 设备B 串口：zb status（或等价）
-       → 读出 B 的 IEEE（必选）以及 sn（推荐核对）
-       → 操作员把该信息记到 A 侧（人工抄写 / 产线夹具录入）
+  ③ 设备B：zb uut
+       → 原地起 Router-UUT；串口直接回 ieee=<16hex>（不必再 zb status）
 
-  ④ 设备A：zb coord                      // form 临时网；此时尚未允许任何人入网
-       → 若未 zb allow：禁止开 join / 开窗也拒绝未知设备
+  ④ 设备A：zb tool
+       → 原地起 TOOL；form；**不**自动开窗
 
-  ⑤ 设备A：zb allow ieee <16hex>         // 必须：登记唯一允许入网的 DUT
-       （可选）zb allow sn <value>         // 入网后 zbcmd sn 核对；不符只告警
+  ⑤ 设备A：zb join <B的ieee>         // 最简：allow + 开窗 60s
+       （等价：zb allow ieee <hex> 自动开窗；zb join [sec] 仅重开）
+       （可选）zb allow sn <value>     // 入网后 zbcmd sn 核对；不符只告警
 
-  ⑥ 设备A：zb join [sec]           // 仅对唯一白名单 IEEE 放行
+  ⑥ B 自动 Steering
+       → IEEE 匹配 → uut joined / A：dut joined
+       → 未 allow / 不匹配 → A：zbft: join deny
 
-  ⑦ 设备B：zb dut                        // ED Steering
-       → IEEE 匹配 → joined
-       → IEEE 不匹配 / 未登记 → 拒绝；A 打 zbft: join deny
+  ⑦ 两侧 zb status：同 ch/同 pan；allow= / joined=
 
-  ⑧ 两侧 zb status：同 ch/同 pan；A 上可见唯一 allow+joined IEEE
+  ⑧ 设备A：zbcmd version|sn|log|…
+       → 只对已 allow 且 joined；超时/未入网 → zbcmd:ng
+       → 若曾 zb allow sn：不符 zbft: sn warn，**不中断**后续 zbcmd
 
-  ⑨ 设备A：zbcmd version|sn|log|…
-       → 只对已 allow 且 joined 的那一台
-       → 若曾 zb allow sn：比对远端 sn，不符打告警日志，**不中断**后续 zbcmd
-
-  ⑩ reboot/掉电 → 临时网与白名单会话作废；Settings 仍在；须重新 ③～⑦
+  ⑨ reboot/掉电 → 临时网与 allow 会话作废；Settings 仍在；须重新 ③～⑧
 ```
 
 ### 1. 入网保障（身份门禁）——本期硬约束
@@ -341,7 +341,7 @@ TOOL↔UUT 切换：写 req + wipe + 冷复位（唯一需要复位的角色路�
        +---> mode             → IDLE
        |
        v
-  须重新：读B身份 → zb coord → zb allow → zb join → zb dut
+  须重新：B zb uut → A zb tool → A zb join <ieee>
 ```
 
 ### 6. 架构示意
@@ -368,168 +368,170 @@ TOOL↔UUT 切换：写 req + wipe + 冷复位（唯一需要复位的角色路�
 | `common/nvs` | sn/did 等；**不**用 Settings 存临时 PAN | 启动清网时误擦应用键 |
 | 量产 `zigbee_ed` / `zigbee_router` | 无改或仅 README 链到本计划 | 增加 `CONFIG_ZIGBEE_ROLE_COORDINATOR` |
 
-### 启动策略（单产物硬约束）
+### 启动策略（单产物硬约束）— **已按 R1 落地**
 
-1. `app_init`：**只清 Zigbee 网络 NV**（保证 factory new）；**不清**应用 Settings。  
-2. 读模式标志（retained RAM / 非 Settings 的短标志；上电默认 `IDLE`）：`IDLE` / `COORD` / `DUT`。  
-3. `MODE_IDLE`：串口 `help` / `zb coord` / `zb dut` / 本地厂测命令；**不起**组网业务（或不起射频栈，视 M0）。  
-4. `zb coord` / `zb dut`：写入模式标志后，**优先同进程切角色**；若栈要求启动期定角色 → **同镜像软复位**进入对应模式（仍是一个 hex）。  
-5. Coord：form network（**默认 ch15**，或用当前 `zb ch` 设定值）。**此时仍无白名单 → 拒绝一切入网。**  
-6. Coord：`zb allow ieee <16hex>`（必选）登记唯一 DUT；可选 `zb allow sn <value>` 供入网后核对。  
-7. Coord：`zb join` 开窗；仅 IEEE 匹配的 Association 接受。  
-8. DUT：Steering（扫描覆盖默认 15 及已配置信道；不做自适应）→ 匹配则 joined，否则被拒。  
-9. Coord：`zbcmd ...` 仅对「已 allow 且已 joined」代理全部可控厂测命令。  
-10. `reboot` / 掉电：清**网** + 清 **allow 会话**；Settings 仍在；mode→`IDLE`；须重新读身份 / `zb coord` / `zb allow` / `zb dut`。信道重启默认回 15（README 写清）。
+1. `zbft_boot`：**只清 zboss 网 NV**；**不清**应用 Settings；默认 **idle（无 RF）**。  
+2. `zb tool` / `zb uut`：栈未起 → **原地起栈**；已起再切角色 → Settings `zbft/req` + wipe + 冷复位。  
+3. TOOL：form（默认 ch15）；**不**自动开窗；无 allow 时开窗也拒未知 IEEE。  
+4. `zb join <ieee>` / `zb allow ieee`：登记唯一 DUT 并开窗；`DEVICE_ANNCE` 比对，mismatch → leave + `join deny`。  
+5. UUT：Router Steering（3s 短重试，配对中不刷日志）；匹配 → `uut joined`。  
+6. `zbcmd`：自定义 ZCL cluster `0xBEEF` 传命令行字符串；UUT `cmd_process_line_remote`；TOOL 等回包（超时 ng）。  
+7. `reboot` / 掉电：网 + allow 会话不恢复；Settings 仍在；须重新 tool/uut/join。
 
-> **M0 硬门槛**：必须在**单一工程、单一 release 产物**内打通 Coord 与 DUT 两种运行模式。允许「软复位 + 模式标志」；**不允许**输出两套固件包作为交付形态。若 NCS/ZBOSS 默认 Kconfig 互斥，则在同工程内解决双角色链接/条件初始化，而不是拆项目。
+> **M0 已过**：单一 factory 产物内 TOOL+UUT；Kconfig=`COORDINATOR` 非 ED 库 → UUT=Router。
 
-## 串口契约（草案）
+## 串口契约（已实现）
 
 | 命令 | 谁用 | 行为 |
 |------|------|------|
-| `help` | 双方 | 列出组网命令 + 厂测命令 |
-| `zb coord` | A | 进入临时 Coord 并 form；**不**自动允许入网 |
-| `zb dut` | B | 进入临时 DUT/ED 并 Steering |
-| `zb status` | 双方 | mode / pan / ch / nwk / ieee / sn / joined / allow |
-| `zb ch [11..26]` | 双方（form 前） | 默认 15；已组网后改 → `ng busy` |
-| `zb allow ieee <hex>\|sn <v>\|clear` | Coord | 唯一白名单；sn 不符告警继续 |
-| `zb join [sec]` | Coord | 开窗；无 allow → ng |
-| `zbcmd <factory-line>` | Coord | 代理到已 allow且 joined 的 DUT |
-| `reboot` / `version` / `sn` / `log` / … | 双方本地 | 与 factory cmd 语义一致 |
+| `help` | 双方 | 列出组网命令 + 厂测命令；`[local]` 可见 |
+| `zb tool`（别名 `coord`） | A | 进 TOOL 并 form；**不**自动开窗；首次无复位 |
+| `zb uut`（别名 `dut`） | B | 进 UUT 并 Steering；**直接回 ieee=** |
+| `zb status` | 双方 | mode / pan / ch / nwk / ieee / allow / joined / sn |
+| `zb ch [11..26]` | 双方（起栈前） | 默认 15；已起栈 → `busy` |
+| `zb allow ieee\|sn\|clear` | TOOL | 唯一白名单；allow ieee 已 formed 时自动开窗 |
+| `zb join <ieee>` / `zb join [sec]` | TOOL | `<ieee>`=allow+开窗；`[sec]` 重开；无 allow → ng |
+| `zbcmd <factory-line>` | TOOL | 代理到已 allow 且 joined 的 DUT；失败 `zbcmd:ng` |
+| `reboot` / `version` / `sn` / `log` / … | 双方本地；可控集可远程 | 与 factory cmd 语义一致 |
 
-日志关键字（验收用，可微调）：
+日志关键字（验收用）：
 
 ```text
-zbft: mode=coord|dut|idle
+zbft: mode=tool|uut (router)|idle
 zbft: net wipe boot
 zbft: settings kept
 zbft: formed ch=15 pan=0x....
 zbft: allow ieee=................
+zbft: join open 60 s
 zbft: join deny ieee=................ reason=no_allow|mismatch
-zbft: permit join sec=180
-zbft: dut joined nwk=0x.... ieee=...
+zbft: dut joined ieee=... nwk=0x....
+zbft: uut joined nwk=0x.... pan=0x....
 zbft: sn warn expect=... got=...          # 不符仍继续
-zbft: sn match
-zbft: zbcmd line=... → ok|ng ...
 ```
 
 ## 里程碑
 
-### S0 — 厂测 cmd 框架（**当前第一步**，落在 `factory`）
+### S0 — 厂测 cmd 框架（落在 `factory`）
 
 - [x] **不**新建工程；在现有 `projects/factory/lib/cmd` 上增强。  
 - [x] 增强：`cmd_register_local` / `local_only`、`cmd_process_line_remote`（capture + 拒 local）、help 标 `[local]`。  
-- [x] 默认可控集（均可远程）：`help` / `version` / `sn` / `sn <v>` / `log` / `reboot` / `ftmexit`。  
-- [x] 本步**不**实现 `zb coord`/`zb dut`/组网（`cmd_set_project_register_fn` 已有，后续挂 zb*）。  
-- [ ] 验收：`.\nrf.cmd -Project factory …` 烧录后串口 `help`/`version`/`sn`/`log`/`reboot` 行为正确；`sn` 重启后仍在。（待你板测）
+- [x] 默认可控集（均可远程）：`help` / `version` / `sn` / `sn <v>` / `log` / `reboot` / `ftmexit` / `mac` / `led` / `btn`。  
+- [x] `zb` / `zbcmd` / `ccfg` 为 `[local]`。  
+- [x] 板测：串口 help / version / sn / log 可用（S0 已过）。
 
 ### M0 — 单产物双角色可行性（硬门槛）
 
 - [x] 在 **`projects/factory`** 上接入 Zigbee；同一 factory 工程能编出**一个**可运行镜像。  
-- [ ] 该镜像经串口可分别进入 Coord（能 form network）与 DUT（能 Steering）— **待板测**。  
-- [x] 机制 **A**：同镜像软复位 + Settings `zbft/req` 一次性角色请求；Kconfig=`COORDINATOR`（非 ED 库）。  
-      **DUT = Router**（非 ZED）：ZBOSS ED/非 ED 预编译库互斥，单 hex 无法链 ED；计划原「本期 ED」顺延，厂测临时 PAN 用 Router-DUT。  
+- [x] 板测：`zb tool` → formed；`zb uut` → Steering / joined（双机已过）。  
+- [x] 机制 **R1**：首次原地起栈；切换才 Settings `zbft/req` + wipe + 冷复位；Kconfig=`COORDINATOR`。  
+      **UUT = Router**（非 ZED）：单 hex 非 ED 库。  
 - [x] **交付物仍是一份** factory 产物；不接受 coord/dut 两包。  
-- [x] 上电：`zbft_wipe` → `zbft: net wipe boot` + `zbft: settings kept`；角色请求消费后清回 idle。
+- [x] 上电：`zbft: net wipe boot` + `zbft: settings kept`；默认 idle。
 
 ### M1 — 组网入口骨架
 
-- [ ] 上电 `zbft: net wipe boot` + `zbft: settings kept`；`sn` 重启后仍在。  
-- [ ] `zb status` / `zb coord` / `zb dut` / `zb ch` 经 factory cmd 注册可用（可先 stub 到 M2 补全）。
+- [x] 上电 `zbft: net wipe boot` + `zbft: settings kept`。  
+- [x] `zb status` / `zb tool|uut`（别名 coord/dut）/ `zb ch` 已注册可用。
 
 ### M2 — 双机组网 + 身份门禁
 
-- [ ] Coord：默认 ch15 form；**未 `zb allow ieee` 时任何 DUT 入网失败**（`join deny`）。  
-- [ ] `zb allow ieee` 后仅该 IEEE 可 joined；错误 IEEE → deny；再写 ieee 覆盖旧白名单（容量=1）。  
-- [ ] 可选 `zb allow sn`：不符时 `sn warn`，`zbcmd` 仍可用。  
-- [ ] `zb ch` 可改后再 form；两侧同 ch。  
-- [ ] DUT：Steering（ED）；匹配后两侧见 joined / nwk / ieee。  
-- [ ] 重启后临时网与 allow 会话不恢复；`sn` 仍在；须重新登记 IEEE。  
-- [ ] **不做**自适应选信道；Router DUT / 多白名单 **不进本期**。
+- [x] TOOL：默认 ch15 form；未 allow 时不开业务入网；错 IEEE → `join deny`。  
+- [x] `zb allow ieee` / `zb join <ieee>`：容量=1；覆盖旧白名单；自动开窗。  
+- [x] 可选 `zb allow sn`（核对在 M3 `zbcmd sn`）。  
+- [x] `zb ch` 起栈前可改；两侧同 ch 板测通过。  
+- [x] UUT：Router Steering；匹配后 `uut joined` / `dut joined`。  
+- [x] 重启后临时网与 allow 不恢复（RAM 会话）。  
+- [x] **不做**自适应选信道；多白名单不进本期。
 
 ### M3 — 厂测命令空中代理
 
-- [ ] DUT 命令执行与本地 `cmd_process_line` 同路径。  
-- [ ] Coord `zbcmd` 覆盖默认可控集：`version` / `sn` / `sn <v>` / `log` / `reboot`（及已实现的 `ftmexit`）。  
-- [ ] 新注册厂测命令默认可远程；`local_only` 须显式标注并在 `help` 可见。  
-- [ ] 超时 / 未入网 / DUT `ng` → Coord 侧明确失败，不假成功。
+- [x] DUT：自定义 ZCL `0xBEEF` + `cmd_process_line_remote`（与本地同表）。  
+- [x] TOOL `zbcmd`：version / sn / log / reboot / ftmexit 等可控集。  
+- [x] 新注册默认可远程；`zb`/`zbcmd`/`ccfg` 为 `local_only`，help 可见 `[local]`。  
+- [x] 超时 / 未 joined → `zbcmd:ng`（不假成功）。  
+- [x] 板测：组网后 `zbcmd` 路径可用（用户确认符合预期）。
 
 ### M4 — 文档与合入
 
-- [ ] 更新 `projects/factory/README.md`：临时 Coord 双机步骤、命令表、与量产界限。  
-- [ ] 写明量产目标烧录形态：整包 hex = **bootloader + app + factory**（现阶段仍 factory 现有烧录，不阻塞 M0–M3）。  
-- [ ] `zigbee_ed` / `zigbee_router` README 链接本计划。  
-- [ ] `decisions.md`：厂测（factory）单镜像允许临时 Coord；量产禁止；禁止厂测双产物；不新建 zigbee_factory。  
-- [ ] （可选）`firmware/x.y.z/` 归档**一份** factory 厂测包说明。
+- [x] 更新 `projects/factory/README.md`：TOOL/UUT 双机步骤、命令表、与量产界限。  
+- [x] 写明量产目标烧录形态：整包 hex = **bootloader + app + factory**（现阶段仍 factory 现有烧录）。  
+- [x] `zigbee_ed` / `zigbee_router` README 链接本计划（量产禁止本厂测 Coord）。  
+- [x] `decisions.md`：厂测单镜像允许临时 TOOL；量产禁止；禁止厂测双产物；不新建 zigbee_factory。  
+- [ ] （可选）`firmware/x.y.z/` 归档**一份** factory 厂测包说明。  
+- [x] 本计划文档同步到 R1 / M0–M3 落地状态。
 
 ### 后续（不进本期）
 
-- [ ] DUT 支持 Router 模式入临时网。  
-- [ ] 量产整包 hex（bootloader + app + factory）产线流程与本厂测通道对接。
+- [ ] 真 ED-UUT（另库 / 双角色链接再议）。  
+- [ ] 量产整包 hex（bootloader + app + factory）产线流程与本厂测通道对接。  
+- [ ] 多白名单 / 自适应信道（明确不做除非新开计划）。
 
-## 实施文件地图（M1 起，随 M0 可调）
+## 实施文件地图
 
-| 路径 | 动作 | 说明 |
+| 路径 | 状态 | 说明 |
 |------|------|------|
-| `projects/factory/lib/cmd/*` | **S0 修改** | `local_only` / capture；默认可控集 |
-| `projects/factory/lib/zigbee/*` | M0+ 新建 | 双模式栈与命令通道（仅 factory 内） |
-| `projects/factory/src/app.c` 等 | M0+ 修改 | 起栈 / 模式 / 注册 zb* 命令 |
-| `projects/factory/prj.conf` 等 | M0+ 修改 | Zigbee Kconfig（单产物约束） |
-| `projects/factory/README.md` | M4 修改 | 双机步骤 |
-| `doc/plan_zigbee_factory_temp_coord.md` | 本文件 | 计划与门禁 |
-| `doc/decisions.md` | M4 修改 | 角色策略一行 |
-| `projects/zigbee_ed` / `zigbee_router` 业务代码 | **不改** | 量产边界 |
+| `projects/factory/lib/cmd/*` | **已做** | `local_only` / remote capture；`zb`/`zbcmd` |
+| `projects/factory/lib/zigbee/*` | **已做** | `zbft` TOOL/UUT + allow/join + zbcmd ZCL |
+| `projects/factory/src/app.c` 等 | **已做** | `zbft_boot`；心跳 60s |
+| `projects/factory/prj.conf` / `pm_static.yml` | **已做** | Zigbee + zboss@0x15E000 |
+| `projects/factory/README.md` | **已做（M4）** | 双机步骤 + 命令表 + 界限 |
+| `doc/plan_zigbee_factory_temp_coord.md` | **本文件** | 计划与门禁 |
+| `doc/decisions.md` | **已做（M4）** | Factory Zigbee FTM 决策行 |
+| `projects/zigbee_ed` / `zigbee_router` 业务代码 | **不改** | 量产边界；README 已链本计划 |
 | `projects/zigbee_factory` | **不建 / 已撤** | 共用 factory |
-| 量产整包 hex 工具/脚本 | **后续** | bootloader+app+factory；不阻塞本期 |
+| 量产整包 hex 工具/脚本 | **后续** | bootloader+app+factory |
 
 ## 验收
 
 ### 组网
 
-1. 两台均按 factory 流程烧录，上电均见 `zbft: net wipe boot`（Zigbee 接入后）。  
-2. B：`zb status` 能读出 **IEEE**（及 sn）。  
-3. A：`zb coord` → formed；**未 zb allow** 时 B `zb dut` → **不能**业务入网（见 `join deny`）。  
-4. A：`zb allow ieee <B的IEEE>` + `zb join`；B：`zb dut` → `dut joined`。  
-5. A 故意 `zb allow` 错误 IEEE → B 入网被拒。  
-6. （可选）A `zb allow sn` 与 B 实际 sn 不符 → 有 `sn warn`，其后 `zbcmd version` 仍 `ok`。  
-7. A/B：`zb status` 同 ch/同 pan；allow 槽位仅见 1 个 IEEE。  
-8. A：`zb ch 20` 后按「改 ch → 再 allow → 再 join」重跑成功；无自适应。
+1. [x] 两台 factory 烧录，上电见 `zbft: net wipe boot` / `settings kept`。  
+2. [x] B：`zb uut` 直接回 **IEEE**。  
+3. [x] A：`zb tool` → formed；未 allow 时不开窗（不业务入网）。  
+4. [x] A：`zb join <B的IEEE>`；B → `uut joined`；A → `dut joined`。  
+5. [ ] A 故意错 IEEE → `join deny`（代码已有；可再抽测）。  
+6. [ ] （可选）`zb allow sn` 不符 → `sn warn`，其后 `zbcmd version` 仍可用。  
+7. [x] A/B：`zb status` 同 ch/同 pan；allow/joined 可见。  
+8. [ ] `zb ch 20` 后重跑组网（代码支持起栈前改 ch；可再抽测）。
 
 ### 厂测命令代理
 
-9. 仅在 allow+joined 后：A `zbcmd version|sn|log` → 与 B 本地等价 `ok`/`ng`/value。  
-10. A：`zbcmd reboot` → B 复位；Settings 仍在；网与 allow 须重做。  
-11. 无 allow/未 joined/超时：`zbcmd …` → `ng`（不可假成功）。  
-12. 新注册可控命令默认可远程；`local_only` 须在 help 可见。
+9. [x] allow+joined 后：`zbcmd version|sn|log` 路径可用（板测通过；本地 sn ≠ 远端 sn）。  
+10. [x] `zbcmd reboot` → B 复位可用（板测通过）。  
+11. [x] 未 joined / 超时 → `zbcmd:ng`。  
+12. [x] `help` 可见 `[local]`（zb / zbcmd / ccfg）。
 
 ### 清网 / Settings / allow
 
-13. `reboot` 后临时 pan **与 allow 会话**均不恢复；须重新读 IEEE → zb coord → zb allow → zb dut。  
-14. 重启前后 `sn`（已写入）保持一致。  
-15. 量产 `zigbee_ed` 抽测：无本厂测 Coord/命令通道。
+13. [ ] `reboot` 后网与 allow 不恢复；须重新 uut → tool → join（建议抽测）。  
+14. [ ] 重启前后 `sn` 保持一致（S0 已覆盖逻辑；可再抽测）。  
+15. [ ] 量产 `zigbee_ed` 抽测：无本厂测 Coord/命令通道（M4）。
 
 ### 负面
 
-16. 两台同时 `zb coord`：串口状态明确；只允许一台 Coord。  
-17. 发布检查：厂测仅一份产物，无 `_coord`/`_dut` 双包。  
-18. 未 zb allow / 错误 IEEE：必须 `join deny`，不得静默成功。  
-19. sn 不符不得导致踢除或阻断后续 `zbcmd`（仅 warn）。
+16. [ ] 两台同时 `zb tool`：状态可观察；只应一台 Coord（现场约定）。  
+17. [x] 厂测仅一份产物（单 hex）。  
+18. [x] 未 allow / 错 IEEE：deny 路径已实现。  
+19. [ ] sn 不符仅 warn、不阻断（代码已有；可再抽测）。
 
 ## 风险与缓解
 
 | 风险 | 缓解 |
 |------|------|
-| ZBOSS 角色编译期互斥 | M0 用同镜像软复位 + 模式标志，或同工程双角色链接；**不**降级为双产物交付 |
-| 清 NV 误清 sn/did | 只清 ZBOSS 网络区；上电日志 `settings kept`；验收重启比 sn |
-| 空中命令与本地语义分叉 | 强制走同一 `cmd_process_line`；禁止旁路第二套解析 |
-| 厂测包流入市场当量产 | 版本串含 `factory`/`zbft`；包装与烧录隔离 |
-| 默认 ch15 被占用 | `zb ch` 手动改信道；不做自适应 |
-| 附近无关设备误入临时网 | **强制 zb allow(IEEE)**；无白名单拒 join；错误 IEEE deny |
-| 回调里做长命令 | 状态机 + work；门禁禁止回调 sleep |
+| ZBOSS 角色编译期互斥 | R1：单 hex + COORDINATOR 库；UUT=Router；切换才 reboot |
+| 清 NV 误清 sn/did | 只清 zboss 分区；上电 `settings kept` |
+| 空中命令与本地语义分叉 | `cmd_process_line_remote` 同表；禁止第二套解析 |
+| 厂测包流入市场当量产 | factory 槽位 / 版本串；量产 ed/router 不带本通道（M4 写清） |
+| 默认 ch15 被占用 | `zb ch` 手动改；不做自适应 |
+| 附近无关设备误入临时网 | allow IEEE + ANNCE 踢除 |
+| 回调里做长命令 | EP handler 只 ingress；UUT 用 `k_work` 执行 |
+| UUT 长退避导致「无反应」 | 固定 3s 重试；配对日志静默 |
 
 ## 下一步
 
-S0 板测已过。**当前 = M0 板测**：单机 `zb status` / `zb coord` form；有第二台再 `zb dut` Steering。通过后进 M1/M2（allow/join）。
+**本期目标已闭环**：M0–M3 功能 + M4 主文档 + 双机 `zbcmd` 板测通过。
+
+剩余可选：错 IEEE deny / `allow sn` warn / 改 ch 抽测；`firmware/` 归档；真 ED-UUT 与量产整包 hex → 见「后续」。
 
 ---
 
@@ -552,3 +554,7 @@ S0 板测已过。**当前 = M0 板测**：单机 `zb status` / `zb coord` form�
 | 2026-11-02 | M0：factory 接 Zigbee；机制 A 软复位；DUT=Router（单 hex）；zboss NV 借用 FLPR 头 |
 | 2026-11-02 | 修：zboss 不可放 0x165000+（FLASH_SIZE=1428KiB）→ settings 缩 8KiB，zboss@0x15E000；cmd 栈 2KiB |
 | 2026-11-02 | **R1 重锁定**：TOOL/UUT；上电 idle；首次原地起栈；切换才 reboot；废「每次 coord 必复位」 |
+| 2026-11-02 | M1–M3 落地：allow/join 门禁、UUT 短重试、`zb join <ieee>` 最简、`zbcmd` 自定义 ZCL 代理；板测通过 |
+| 2026-11-02 | 计划文档同步：操作总览/契约/里程碑/验收打勾；下一步 = M4 |
+| 2026-11-02 | **M4**：factory README 双机步骤；decisions 决策行；ed/router README 量产边界链接 |
+| 2026-11-02 | 板测闭环：`zbcmd sn` 远端值 ≠ 本地 sn；`zbcmd reboot` OK；本期验收通过 |

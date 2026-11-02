@@ -79,12 +79,7 @@ static bool nvs_boot_share_persist(uint8_t mode);
 
 static void nvs_cache_apply_defaults(void)
 {
-	static const uint8_t def_mac[NVS_MAC_SIZE] = NVS_DEFAULT_MAC;
-
-	if (!s_cache.have_mac) {
-		memcpy(s_cache.mac, def_mac, NVS_MAC_SIZE);
-	}
-	/* sn：无键时不在此填默认；nvs_init 末尾生成并落盘 */
+	/* mac/sn：无键时不在此填默认；nvs_init 末尾生成并落盘 */
 	if (!s_cache.have_dtype) {
 		s_cache.device_type = NVS_DEFAULT_DEVICE_TYPE;
 	}
@@ -254,6 +249,48 @@ static bool nvs_sn_generate_and_persist(void)
 	return true;
 }
 
+/**
+ * 首启 MAC：优先 FICR device_id（与 Zigbee IEEE 同源唯一段），失败则随机。
+ * 写入后不再改；可用串口 mac 命令覆盖。
+ */
+static bool nvs_mac_generate_and_persist(void)
+{
+	uint8_t mac[NVS_MAC_SIZE];
+	ssize_t id_len;
+	int i;
+	bool from_id = false;
+
+	memset(mac, 0, sizeof(mac));
+	id_len = hwinfo_get_device_id(mac, sizeof(mac));
+	if (id_len > 0) {
+		for (i = 0; i < (int)id_len; i++) {
+			if (mac[i] != 0U) {
+				from_id = true;
+				break;
+			}
+		}
+	}
+	if (!from_id) {
+		if (sys_csrand_get(mac, sizeof(mac)) != 0) {
+			(void)sys_rand_get(mac, sizeof(mac));
+		}
+		/* 本地管理位，避免与全球 OUI 冲突 */
+		mac[0] = (uint8_t)((mac[0] & 0xFEU) | 0x02U);
+		LOG_WARN("nvs: MAC from random (no device_id)");
+	}
+
+	memcpy(s_cache.mac, mac, NVS_MAC_SIZE);
+	s_cache.have_mac = 1U;
+	if (!nvs_save_one(NVS_KEY_MAC, s_cache.mac, NVS_MAC_SIZE)) {
+		LOG_WARN("nvs: MAC generate ok in RAM, save failed");
+		return false;
+	}
+	LOG_INFO("nvs: first-boot MAC %s mac=%02X%02X%02X%02X%02X%02X%02X%02X",
+		 from_id ? "device_id" : "random", mac[0], mac[1], mac[2], mac[3], mac[4],
+		 mac[5], mac[6], mac[7]);
+	return true;
+}
+
 void nvs_init(void)
 {
 	int rc;
@@ -269,6 +306,9 @@ void nvs_init(void)
 		LOG_ERROR("settings_subsys_init rc=%d", rc);
 		nvs_cache_apply_defaults();
 		s_ready = true;
+		if (!s_cache.have_mac) {
+			(void)nvs_mac_generate_and_persist();
+		}
 		if (!s_cache.have_sn) {
 			(void)nvs_sn_generate_and_persist();
 		}
@@ -283,6 +323,15 @@ void nvs_init(void)
 
 	nvs_cache_apply_defaults();
 	s_ready = true;
+
+	if (!s_cache.have_mac) {
+		if (!nvs_mac_generate_and_persist()) {
+			static const uint8_t def_mac[NVS_MAC_SIZE] = NVS_DEFAULT_MAC;
+
+			memcpy(s_cache.mac, def_mac, NVS_MAC_SIZE);
+			s_cache.have_mac = 1U;
+		}
+	}
 
 	if (!s_cache.have_sn) {
 		if (!nvs_sn_generate_and_persist()) {
@@ -299,13 +348,8 @@ void nvs_log_boot_dump(void)
 {
 	uint8_t mac[NVS_MAC_SIZE];
 	char sn[NVS_SN_SIZE];
-	char hw_ver[NVS_HW_VERSION_SIZE];
 	char app_ver[NVS_APP_VERSION_SIZE];
 	char build[NVS_BUILD_DATE_SIZE];
-	uint32_t did;
-	uint32_t hid;
-	uint32_t active;
-	const char *proj;
 
 	if (!s_ready) {
 		LOG_WARN("nvs dump: not ready");
@@ -314,58 +358,45 @@ void nvs_log_boot_dump(void)
 
 	(void)nvs_mac_get(mac);
 	(void)nvs_sn_get(sn);
-	(void)nvs_hw_version_get(hw_ver);
 	(void)nvs_app_version_get(app_ver);
-	did = nvs_device_id_get();
-	hid = nvs_hardware_id_get();
-	active = nvs_product_id_active();
-	proj = nvs_device_id_project_name(active);
 	(void)nvs_build_date_format(nvs_build_date_get(), build, sizeof(build));
 
-	LOG_INFO("nvs dump ----");
-	LOG_INFO("  ns=%s ready=%u", NVS_APP_NAMESPACE, (unsigned)s_ready);
-	LOG_INFO("  mac=%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X have=%u", mac[0], mac[1], mac[2],
-		 mac[3], mac[4], mac[5], mac[6], mac[7], (unsigned)s_cache.have_mac);
-	LOG_INFO("  sn=%s have=%u", sn, (unsigned)s_cache.have_sn);
-	LOG_INFO("  dtype=%u did=0x%08x (nvm) active=0x%08x (%s) have_did=%u",
-		 (unsigned)nvs_device_type_get(), did, active, (proj != NULL) ? proj : "?",
-		 (unsigned)s_cache.have_did);
-	LOG_INFO("  hid=0x%08x (%s) have=%u", hid, device_profile_hardware_name(hid),
-		 (unsigned)s_cache.have_hid);
-	LOG_INFO("  bmode=%u have=%u  hw=%s app=%s build=%s", (unsigned)nvs_boot_mode_get(),
-		 (unsigned)s_cache.have_bmode, hw_ver, app_ver, build);
-	LOG_INFO("  epanel=%u (%s) have=%u", (unsigned)nvs_epd_panel_get(),
-		 (nvs_epd_panel_get() == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in",
-		 (unsigned)s_cache.have_epanel);
-	LOG_INFO("nvs dump ----");
+	LOG_INFO("nvs: sn=%s mac=%02X%02X%02X%02X%02X%02X%02X%02X bmode=%u app=%s build=%s", sn,
+		 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac[6], mac[7],
+		 (unsigned)nvs_boot_mode_get(), app_ver, build);
 }
 
 void nvs_factory_reset(void)
 {
-	static const uint8_t def_mac[NVS_MAC_SIZE] = NVS_DEFAULT_MAC;
-
 	if (!s_ready) {
 		nvs_init();
 	}
 
-	memcpy(s_cache.mac, def_mac, NVS_MAC_SIZE);
 	s_cache.device_type = NVS_DEFAULT_DEVICE_TYPE;
 	s_cache.device_id = NVS_DEVICE_ID_DEFAULT;
 	s_cache.hardware_id = NVS_DEFAULT_HARDWARE_ID;
 	s_cache.boot_mode = NVS_BOOT_MODE_APP;
 	s_cache.epd_panel = NVS_EPD_PANEL_2IN9;
-	s_cache.have_mac = s_cache.have_dtype = 1U;
+	s_cache.have_dtype = 1U;
 	s_cache.have_did = s_cache.have_hid = s_cache.have_bmode = 1U;
 	s_cache.have_epanel = 1U;
+	s_cache.have_mac = 0U;
 	s_cache.have_sn = 0U;
 
-	(void)nvs_save_one(NVS_KEY_MAC, s_cache.mac, NVS_MAC_SIZE);
 	(void)nvs_save_one(NVS_KEY_DEVICE_TYPE, &s_cache.device_type, sizeof(s_cache.device_type));
 	(void)nvs_save_one(NVS_KEY_DEVICE_ID, &s_cache.device_id, sizeof(s_cache.device_id));
 	(void)nvs_save_one(NVS_KEY_HARDWARE_ID, &s_cache.hardware_id, sizeof(s_cache.hardware_id));
 	(void)nvs_save_one(NVS_KEY_BOOT_MODE, &s_cache.boot_mode, sizeof(s_cache.boot_mode));
 	(void)nvs_save_one(NVS_KEY_EPD_PANEL, &s_cache.epd_panel, sizeof(s_cache.epd_panel));
 	(void)nvs_boot_share_persist(s_cache.boot_mode);
+
+	if (!nvs_mac_generate_and_persist()) {
+		static const uint8_t def_mac[NVS_MAC_SIZE] = NVS_DEFAULT_MAC;
+
+		memcpy(s_cache.mac, def_mac, NVS_MAC_SIZE);
+		s_cache.have_mac = 1U;
+		(void)nvs_save_one(NVS_KEY_MAC, s_cache.mac, NVS_MAC_SIZE);
+	}
 
 	if (!nvs_sn_generate_and_persist()) {
 		strncpy(s_cache.sn, NVS_DEFAULT_SN, NVS_SN_SIZE - 1U);
