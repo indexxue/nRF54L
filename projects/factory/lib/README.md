@@ -6,7 +6,7 @@
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| cmd | `lib/cmd/` | 厂测串口命令（help / reboot / log / version） |
+| cmd | `lib/cmd/` | 厂测串口：help/reboot/log/version/sn/mac/led/btn/ccfg/ftmexit + zb*（todo）；`local_only` + remote capture |
 
 ## 归属
 

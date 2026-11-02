@@ -58,10 +58,30 @@ mcuboot_secondary_app:
   region: flash_primary
   size: 0xa5800
 
+# App RRAM ends at 0x165000 (FLASH_SIZE=1428 KiB). boot_share stays at 0x164000.
+# Carve zboss from former 32 KiB settings gap (FLPR at 0x165000+ is out of bounds).
 settings_storage:
   address: 0x15c000
   region: flash_primary
-  size: 0x8000
+  size: 0x2000
+
+# Size must be N * 0x4000 when CONFIG_ZIGBEE_NVRAM_PAGE_COUNT=4 (page = size/count,
+# each logical page multiple of 4 KiB physical).
+zboss_nvram:
+  address: 0x15e000
+  region: flash_primary
+  size: 0x4000
+
+zboss_product_config:
+  address: 0x162000
+  region: flash_primary
+  size: 0x1000
+
+# Fill gap so PM has a single dynamic hole (required).
+factory_spare:
+  address: 0x163000
+  region: flash_primary
+  size: 0x1000
 
 boot_share:
   address: 0x164000

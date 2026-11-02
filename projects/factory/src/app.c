@@ -15,6 +15,7 @@
 #include "flash_partition.h"
 #include "log.h"
 #include "nvs.h"
+#include "zbft.h"
 
 /** PC-based slot guess (swap-move images are primary-linked; see plan note). */
 static uint8_t app_probe_slot(void)
@@ -70,17 +71,21 @@ status_t app_init(void)
 	cmd_register_defaults();
 	factory_hw_init();
 
+	if (zbft_boot() != STATUS_OK) {
+		LOG_WARN("zbft_boot failed");
+	}
+
 	LOG_INFO("factory app_init ok hw=%s slot=%u bmode=%u",
 		 device_profile_hardware_name(device_profile_hardware_id()),
 		 (unsigned)slot, (unsigned)bmode);
-	printk("factory printk ok (uart20 P1.09/P1.10) slot=%u bmode=%u\n",
+	printk("factory printk ok (uart20 P1.04/P1.05) slot=%u bmode=%u\n",
 	       (unsigned)slot, (unsigned)bmode);
 	return STATUS_OK;
 }
 
 void app_run(void)
 {
-	int64_t next_hb_ms = k_uptime_get() + 10000;
+	int64_t next_hb_ms = k_uptime_get() + 60000;
 
 	LOG_INFO("factory app_run (type help; FTM seq in common)");
 
@@ -90,7 +95,7 @@ void app_run(void)
 
 		if (k_uptime_get() >= next_hb_ms) {
 			LOG_INFO("factory heartbeat");
-			next_hb_ms += 10000;
+			next_hb_ms += 60000;
 		}
 
 		k_msleep(20);

@@ -39,7 +39,7 @@ static const board_button_spec_t s_buttons[] = {
 };
 
 static const board_config_t s_board = {
-	.name = "factory_ty_rev_a",
+	.name = "factory_ty",
 	.mask = BOARD_MASK_LED | BOARD_MASK_UART | BOARD_MASK_BUTTON,
 
 	.leds = s_leds,
