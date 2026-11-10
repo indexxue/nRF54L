@@ -16,6 +16,7 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/sys/util.h>
 
 #include <zboss_api.h>
 #include <zb_nrf_platform.h>
@@ -33,8 +34,28 @@ LOG_MODULE_REGISTER(zigbee_app, LOG_LEVEL_INF);
 #define ZIGBEE_APP_REJOIN_RETRY_MIN_MS 2000U
 #define ZIGBEE_APP_REJOIN_RETRY_MAX_MS 64000U
 
+/* ZCL char string: byte0=len, then payload (no NUL). Max payload 31. */
+BUILD_ASSERT(sizeof(CONFIG_ZIGBEE_ED_MANUFACTURER) - 1U <= 31U,
+	     "CONFIG_ZIGBEE_ED_MANUFACTURER too long");
+BUILD_ASSERT(sizeof(CONFIG_ZIGBEE_ED_MODEL) - 1U <= 31U,
+	     "CONFIG_ZIGBEE_ED_MODEL too long");
+
+struct zb_device_basic_attr {
+	zb_uint8_t zcl_version;
+	zb_uint8_t app_version;
+	zb_uint8_t stack_version;
+	zb_uint8_t hw_version;
+	zb_char_t mf_name[32];
+	zb_char_t model_id[32];
+	zb_char_t date_code[16];
+	zb_uint8_t power_source;
+	zb_char_t location_id[17];
+	zb_uint8_t ph_env;
+	zb_char_t sw_ver[17];
+};
+
 struct zb_device_ctx {
-	zb_zcl_basic_attrs_t basic_attr;
+	struct zb_device_basic_attr basic_attr;
 	zb_zcl_identify_attrs_t identify_attr;
 	zb_zcl_on_off_attrs_t on_off_attr;
 };
@@ -47,8 +68,13 @@ static struct k_work_delayable s_steer_window_work;
 
 ZB_ZCL_DECLARE_IDENTIFY_ATTRIB_LIST(identify_attr_list, &s_dev_ctx.identify_attr.identify_time);
 
-ZB_ZCL_DECLARE_BASIC_ATTRIB_LIST(basic_attr_list, &s_dev_ctx.basic_attr.zcl_version,
-				 &s_dev_ctx.basic_attr.power_source);
+ZB_ZCL_DECLARE_BASIC_ATTRIB_LIST_EXT(
+	basic_attr_list, &s_dev_ctx.basic_attr.zcl_version, &s_dev_ctx.basic_attr.app_version,
+	&s_dev_ctx.basic_attr.stack_version, &s_dev_ctx.basic_attr.hw_version,
+	s_dev_ctx.basic_attr.mf_name, s_dev_ctx.basic_attr.model_id,
+	s_dev_ctx.basic_attr.date_code, &s_dev_ctx.basic_attr.power_source,
+	s_dev_ctx.basic_attr.location_id, &s_dev_ctx.basic_attr.ph_env,
+	s_dev_ctx.basic_attr.sw_ver);
 
 ZB_ZCL_DECLARE_ON_OFF_ATTRIB_LIST(on_off_attr_list, &s_dev_ctx.on_off_attr.on_off);
 
@@ -62,6 +88,7 @@ ZBOSS_DECLARE_DEVICE_CTX_1_EP(app_light_ctx, app_light_ep);
 K_MSGQ_DEFINE(s_zb_evt_q, sizeof(zigbee_app_evt_t), 8, 4);
 
 static void zigbee_app_evt_post_net(zigbee_app_state_t state, bool with_addr);
+static void zigbee_app_evt_post_light(bool on);
 static void zigbee_app_do_steer(zb_bufid_t bufid);
 static void zigbee_app_do_steer_timeout(zb_bufid_t bufid);
 static void zigbee_app_do_same_net_rejoin(zb_bufid_t bufid);
@@ -161,6 +188,49 @@ static void zigbee_app_log_rejoin_ok(void)
 }
 
 /**
+ * 入网后装 OnOff 默认上报：变化即报；最长 300s 心跳。
+ * 涂鸦/协调器也可再下 Configure Reporting（override 允许覆盖）。
+ */
+static void zigbee_app_onoff_report_setup(void)
+{
+	zb_zcl_reporting_info_t info;
+	zb_ret_t ret;
+
+	memset(&info, 0, sizeof(info));
+	info.direction = ZB_ZCL_CONFIGURE_REPORTING_SEND_REPORT;
+	info.ep = ZIGBEE_APP_ENDPOINT;
+	info.cluster_id = ZB_ZCL_CLUSTER_ID_ON_OFF;
+	info.cluster_role = ZB_ZCL_CLUSTER_SERVER_ROLE;
+	info.attr_id = ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID;
+	info.manuf_code = ZB_ZCL_NON_MANUFACTURER_SPECIFIC;
+	info.dst.short_addr = 0x0000U; /* coordinator */
+	info.dst.endpoint = 1U;
+	info.dst.profile_id = ZB_AF_HA_PROFILE_ID;
+	/* put_reporting_info 会把 def_* 拷到实际 min/max */
+	info.u.send_info.def_min_interval = 0U;
+	info.u.send_info.def_max_interval = 300U;
+	info.u.send_info.delta.u8 = 1U;
+
+	ret = zb_zcl_put_reporting_info(&info, ZB_TRUE);
+	printk("zigbee: onoff report put ret=%d\n", (int)ret);
+	ret = zb_zcl_start_attr_reporting(ZIGBEE_APP_ENDPOINT, ZB_ZCL_CLUSTER_ID_ON_OFF,
+					  ZB_ZCL_CLUSTER_SERVER_ROLE,
+					  ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+	printk("zigbee: onoff report start ret=%d\n", (int)ret);
+}
+
+/** 同步 OnOff 属性并驱灯；SET_ATTRIBUTE 在已开上报时触发 report。 */
+static void zigbee_app_onoff_set_value(zb_uint8_t on)
+{
+	s_dev_ctx.on_off_attr.on_off = on;
+	ZB_ZCL_SET_ATTRIBUTE(ZIGBEE_APP_ENDPOINT, ZB_ZCL_CLUSTER_ID_ON_OFF,
+			     ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+			     &s_dev_ctx.on_off_attr.on_off, ZB_FALSE);
+	printk("zigbee: zcl onoff=%d\n", on ? 1 : 0);
+	zigbee_app_evt_post_light(on != 0U);
+}
+
+/**
  * 仅在 BDB STEERING 成功（或上电已在网）时调用。
  * ZB_JOINED() 可能在 TCLK 完成前就为 true，过早 on_joined 会掐断密钥交换。
  */
@@ -176,6 +246,7 @@ static void zigbee_app_on_joined(void)
 	if (was_rejoin && ZB_JOINED()) {
 		zigbee_app_log_rejoin_ok();
 	}
+	zigbee_app_onoff_report_setup();
 	zigbee_app_evt_post_net(ZIGBEE_APP_STATE_JOINED, true);
 }
 
@@ -250,9 +321,29 @@ static void zigbee_app_evt_post_light(bool on)
 static void zigbee_app_clusters_attr_init(void)
 {
 	s_dev_ctx.basic_attr.zcl_version = ZB_ZCL_VERSION;
+	s_dev_ctx.basic_attr.app_version = (zb_uint8_t)CONFIG_ZIGBEE_ED_APP_VERSION;
+	s_dev_ctx.basic_attr.stack_version = 0U;
+	s_dev_ctx.basic_attr.hw_version = 0U;
+	/*
+	 * ZCL 字符串：首字节为长度（不含尾 0）。例："TY" → [0x02,'T','Y']
+	 */
+	ZB_ZCL_SET_STRING_VAL(s_dev_ctx.basic_attr.mf_name, CONFIG_ZIGBEE_ED_MANUFACTURER,
+			      ZB_ZCL_STRING_CONST_SIZE(CONFIG_ZIGBEE_ED_MANUFACTURER));
+	ZB_ZCL_SET_STRING_VAL(s_dev_ctx.basic_attr.model_id, CONFIG_ZIGBEE_ED_MODEL,
+			      ZB_ZCL_STRING_CONST_SIZE(CONFIG_ZIGBEE_ED_MODEL));
+	ZB_ZCL_SET_STRING_VAL(s_dev_ctx.basic_attr.date_code, "", 0);
 	s_dev_ctx.basic_attr.power_source = TEMPLATE_INIT_BASIC_POWER_SOURCE;
+	ZB_ZCL_SET_STRING_VAL(s_dev_ctx.basic_attr.location_id, "", 0);
+	s_dev_ctx.basic_attr.ph_env = ZB_ZCL_BASIC_ENV_UNSPECIFIED;
+	ZB_ZCL_SET_STRING_VAL(s_dev_ctx.basic_attr.sw_ver, CONFIG_APP_VERSION_STRING,
+			      ZB_ZCL_STRING_CONST_SIZE(CONFIG_APP_VERSION_STRING));
+
 	s_dev_ctx.identify_attr.identify_time = ZB_ZCL_IDENTIFY_IDENTIFY_TIME_DEFAULT_VALUE;
 	s_dev_ctx.on_off_attr.on_off = ZB_ZCL_ON_OFF_IS_OFF;
+
+	printk("zigbee: id mfr=%s model=%s app_ver=0x%02x sw=%s\n", CONFIG_ZIGBEE_ED_MANUFACTURER,
+	       CONFIG_ZIGBEE_ED_MODEL, (unsigned)s_dev_ctx.basic_attr.app_version,
+	       CONFIG_APP_VERSION_STRING);
 }
 
 static void zigbee_app_do_leave(zb_bufid_t bufid)
@@ -326,12 +417,13 @@ static void zcl_device_cb(zb_bufid_t bufid)
 
 		if ((cluster_id == ZB_ZCL_CLUSTER_ID_ON_OFF) &&
 		    (attr_id == ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID)) {
-			bool on = (device_cb_param->cb_param.set_attr_value_param.values.data8 !=
-				   0U);
+			zb_uint8_t on =
+				(device_cb_param->cb_param.set_attr_value_param.values.data8 != 0U) ?
+					ZB_ZCL_ON_OFF_IS_ON :
+					ZB_ZCL_ON_OFF_IS_OFF;
 
-			/* 立刻打点：与 app 灯效解耦，便于确认空中 ZCL 已到 */
-			printk("zigbee: zcl onoff=%d\n", on ? 1 : 0);
-			zigbee_app_evt_post_light(on);
+			/* 同步属性 + 上报标记；灯效仍经 evt 队列（回调不阻塞） */
+			zigbee_app_onoff_set_value(on);
 		} else {
 			device_cb_param->status = RET_NOT_IMPLEMENTED;
 		}

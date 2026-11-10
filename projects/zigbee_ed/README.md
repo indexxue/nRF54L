@@ -13,6 +13,7 @@ Zigbee **End Device** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网
 - 需求：[`doc/req_nrf54_zigbee_end_device.md`](../../doc/req_nrf54_zigbee_end_device.md)  
 - 交付交接：[`doc/zigbee_demo_handoff_to_zigbridge.md`](../../doc/zigbee_demo_handoff_to_zigbridge.md)  
 - 系统角色说明：[`README_zigbee_system.md`](README_zigbee_system.md)（Coordinator / Router / ED + 应用类型）  
+- **涂鸦标准接入**：计划 [`doc/plan_tuya_zigbee_ed_standard.md`](../../doc/plan_tuya_zigbee_ed_standard.md)；**PID/DP/Basic 身份** 以 [`doc/tuya_ed_zcl_mapping.md`](../../doc/tuya_ed_zcl_mapping.md) 为准（平台字段未填前仅占位联调）  
 - **量产边界**：本工程 **禁止** 临时 Coord / `zbcmd` 厂测后门；该类能力仅在 [`projects/factory`](../factory/)（计划 [`doc/plan_zigbee_factory_temp_coord.md`](../../doc/plan_zigbee_factory_temp_coord.md)）
 
 ## 依赖
@@ -48,7 +49,8 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | Endpoint | **1**（`ZIGBEE_APP_ENDPOINT`） |
 | Cluster | OnOff **`0x0006`** Server |
 | On / Off / Toggle | `0x01` / `0x00` / `0x02` |
-| 串口 | `light: on` / `light: off` |
+| Basic Manufacturer / Model | `CONFIG_ZIGBEE_ED_MANUFACTURER` / `CONFIG_ZIGBEE_ED_MODEL`（默认联调占位 `TY` / `zigbee_ed`；见映射表） |
+| 串口 | `light: on` / `light: off`；起栈见 `zigbee: id mfr=… model=…` |
 
 ## 按键 / LED
 
@@ -95,6 +97,21 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 ```
 
 刷机前若刚跑过 Router 镜像：建议 BTN2 双击 leave 或擦 `zboss_nvram`，避免角色脏网表。
+
+## 涂鸦标准接入（方案 B）
+
+子设备只认标准 ZCL；云与 App 经**涂鸦 Zigbee 多模网关**。映射与建品填空见 [`doc/tuya_ed_zcl_mapping.md`](../../doc/tuya_ed_zcl_mapping.md)。
+
+**平台侧（T0，需账号）**：IoT 建 **标准 Zigbee** 单路开关灯产品（勿选模组 MCU）→ 把 PID、manufacturer、model、开关 DP 填进映射表 §1 / §3。
+
+**设备侧粗流程（网关到手且映射填齐后）**：
+
+1. 网关配网并在涂鸦智能 / Smart Life 上线  
+2. App 添加设备 → 本机 **BTN1** 开 60s 配网窗  
+3. 绑定到本 PID 产品后，App 开关 → LED_G + `light: on|off`  
+4. 失败：BTN2 双击 leave，或长按擦 `zboss_nvram` 后重来  
+
+PID 未定时固件可用占位身份联调；**量产 release 不得保留占位**。
 
 ## ZigBridge-EM 联调
 
