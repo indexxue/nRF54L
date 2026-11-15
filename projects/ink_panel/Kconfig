@@ -1,0 +1,34 @@
+# Zigbee ED application options (sourced beside CMakeLists.txt).
+
+config ZIGBEE_APP_TX_POWER
+	int "Zigbee TX power (dBm)"
+	range -40 8
+	default 8
+	help
+	  Transmit power applied to each channel in CONFIG_ZIGBEE_CHANNEL_MASK
+	  after zigbee_enable(). Session is compile-time only (not Settings).
+
+config ZIGBEE_ED_MANUFACTURER
+	string "ZCL Basic ManufacturerName"
+	default "TY"
+	help
+	  Length-prefixed on the air (max 31 chars). Must match
+	  doc/tuya_ed_zcl_mapping.md when Tuya requires a fixed value.
+
+config ZIGBEE_ED_MODEL
+	string "ZCL Basic ModelIdentifier"
+	default "ink_panel"
+	help
+	  Length-prefixed on the air (max 31 chars). Align with product name
+	  or PID per doc/tuya_ed_zcl_mapping.md.
+
+config ZIGBEE_ED_APP_VERSION
+	hex "ZCL Basic ApplicationVersion"
+	range 0 0xff
+	default 0x01
+	help
+	  Single-byte Basic ApplicationVersion attribute.
+
+menu "Zephyr Kernel"
+source "Kconfig.zephyr"
+endmenu

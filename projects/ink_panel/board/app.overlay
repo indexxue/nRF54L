@@ -1,0 +1,190 @@
+/*
+ * ink_panel — EVT netlist (Netlist_Schematic1_2026-11-05)
+ *
+ * UART00: TX=P2.02  RX=P2.00  (P2 与 SERIAL00 同域；不用 uart20，把 serial20 留给 spi20)
+ *           外接 TTL：RX←P2.02，TX→P2.00，GND；勿接 Type-C D+/D−
+ * EPD:    bit-bang SCK=P1.08 MOSI=P1.09；CS/DC/RST/BUSY GPIO（spi20 暂关：SPIM 预置 SCK 会 Bus Fault）
+ * I2C21:  SCL=P1.11 SDA=P1.12 (nPM1300 + CAP1203)
+ * LED0:   P1.13 ACTIVE_LOW   (LED_STATUS_N)
+ * BTN1:   P0.00 ACTIVE_LOW   (BTN_USER_N); no BTN2 (P0.01 = TOUCH_ALERT)
+ *
+ * Must disable DK leftovers: button0 shares P1.13 with LED; spi00+mx25
+ * has no NOR on EVT and storms SPIM IRQs (CPU stuck in nrfx_spim).
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+&pinctrl {
+	uart00_default: uart00_default {
+		group1 {
+			/* QFN48 dedicated: UARTE TXD = P2.02 (not P2.01) */
+			psels = <NRF_PSEL(UART_TX, 2, 2)>;
+		};
+		group2 {
+			/* QFN48 dedicated: UARTE RXD = P2.00 */
+			psels = <NRF_PSEL(UART_RX, 2, 0)>;
+			bias-pull-up;
+		};
+	};
+
+	uart00_sleep: uart00_sleep {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 2, 2)>,
+				<NRF_PSEL(UART_RX, 2, 0)>;
+			low-power-enable;
+		};
+	};
+
+	/* EVT I²C → nPM1300 (+ CAP1203)；SCL=P1.11 SDA=P1.12；外置 4.7k 上拉 */
+	i2c21_default: i2c21_default {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SCL, 1, 11)>,
+				<NRF_PSEL(TWIM_SDA, 1, 12)>;
+		};
+	};
+
+	i2c21_sleep: i2c21_sleep {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SCL, 1, 11)>,
+				<NRF_PSEL(TWIM_SDA, 1, 12)>;
+			low-power-enable;
+		};
+	};
+
+};
+
+/* 控制台改 uart00，释放 serial20 给 spi20；脚仍 P2.02/P2.00 */
+&uart00 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart00_default>;
+	pinctrl-1 = <&uart00_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&uart20 {
+	status = "disabled";
+};
+
+&spi20 {
+	status = "disabled";
+};
+
+&i2c21 {
+	status = "okay";
+	compatible = "nordic,nrf-twim";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	pinctrl-0 = <&i2c21_default>;
+	pinctrl-1 = <&i2c21_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&pwm20 {
+	status = "disabled";
+};
+
+&pwm_led1 {
+	status = "disabled";
+};
+
+/* DK buttons: button0 == P1.13 == our LED — must all be off */
+&button0 {
+	status = "disabled";
+};
+
+&button1 {
+	status = "disabled";
+};
+
+&button2 {
+	status = "disabled";
+};
+
+&button3 {
+	status = "disabled";
+};
+
+&led0 {
+	gpios = <&gpio1 13 GPIO_ACTIVE_LOW>;
+	label = "LED_STATUS P1.13";
+};
+
+&led1 {
+	status = "disabled";
+};
+
+&led2 {
+	status = "disabled";
+};
+
+&led3 {
+	status = "disabled";
+};
+
+&nfct {
+	status = "disabled";
+};
+
+/* DK onboard MX25 SPI NOR — not present on EVT wiring */
+&spi00 {
+	status = "disabled";
+};
+
+&mx25r64 {
+	status = "disabled";
+};
+
+/* 32 MHz HFXO（X1）：射频必需；内部负载先拉满，按晶振 CL 再微调 */
+&hfxo {
+	status = "okay";
+	load-capacitors = "internal";
+	load-capacitance-femtofarad = <17000>;
+};
+
+/* 32.768 kHz LFXO（X2 → P1.00/P1.01）；与 prj.conf K32SRC_XTAL 配对 */
+&lfxo {
+	status = "okay";
+	load-capacitors = "internal";
+	load-capacitance-femtofarad = <17000>;
+};
+
+&timer20 {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+/ {
+	chosen {
+		zephyr,console = &uart00;
+		zephyr,shell-uart = &uart00;
+		ncs,zigbee-timer = &timer20;
+	};
+
+	zephyr,user {
+		btn1-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		/* EVT: EPD_PWR_EN→LS2；TOUCH_LDO_EN→LDO1；ALERT# OD 低有效 */
+		epd-pwr-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+		touch-ldo-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+		touch-alert-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		/* EPD bit-bang：SCK/MOSI + CS/DC/RST/BUSY */
+		epd-sck-gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
+		epd-mosi-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		epd-cs-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;
+		epd-dc-gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;
+		epd-rst-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
+		epd-busy-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
+	};
+};
