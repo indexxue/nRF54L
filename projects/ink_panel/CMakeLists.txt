@@ -31,16 +31,25 @@ target_sources(app PRIVATE
   board/board_config.c
   board/npm1300_board.c
   board/cap1203_board.c
-  board/epd_board.c
   lib/zigbee/zigbee_app.c
   lib/zigbee/zboss_mem_globals.c
   ${CBB_NPM1300_DIR}/npm1300.c
   ${CBB_CAP1203_DIR}/cap1203.c
-  ${CBB_EPD_DIR}/epd.c
-  ${CBB_EPD_DIR}/epd_display.c
-  ${CBB_EPD_DIR}/epd_display_assets.c
-  ${CBB_EPD_DIR}/panels/epd_panel_ws_4in2b_v2.c
 )
+
+if(CONFIG_INK_PANEL_EPD)
+  target_sources(app PRIVATE
+    board/epd_board.c
+    ${CBB_EPD_DIR}/epd.c
+    ${CBB_EPD_DIR}/epd_display.c
+    ${CBB_EPD_DIR}/epd_display_assets.c
+    ${CBB_EPD_DIR}/panels/epd_panel_ws_4in2b_v2.c
+  )
+endif()
+
+if(CONFIG_INK_PANEL_NFC)
+  target_sources(app PRIVATE board/nfc_board.c)
+endif()
 
 set_source_files_properties(lib/zigbee/zboss_mem_globals.c PROPERTIES COMPILE_OPTIONS -fno-lto)
 
@@ -50,6 +59,9 @@ target_include_directories(app PRIVATE
   lib/zigbee
   ${CBB_NPM1300_DIR}
   ${CBB_CAP1203_DIR}
-  ${CBB_EPD_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include
 )
+
+if(CONFIG_INK_PANEL_EPD)
+  target_include_directories(app PRIVATE ${CBB_EPD_DIR})
+endif()

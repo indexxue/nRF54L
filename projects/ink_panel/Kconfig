@@ -1,4 +1,19 @@
-# Zigbee ED application options (sourced beside CMakeLists.txt).
+# Zigbee ED / board feature options (sourced beside CMakeLists.txt).
+
+config INK_PANEL_EPD
+	bool "Enable e-ink panel (bitbang + smoke bringup)"
+	default y
+	help
+	  When disabled, epd_board / cbb/epd are not built and app skips
+	  EPD smoke/refresh. Use prj.conf CONFIG_INK_PANEL_EPD=n to gate off.
+
+config INK_PANEL_NFC
+	bool "Enable on-chip NFCT Type 2 Tag smoke"
+	default y
+	help
+	  When enabled, builds nfc_board and starts T2T emulation with a fixed
+	  NDEF Text payload for EVT field/read smoke. Use prj.conf
+	  CONFIG_INK_PANEL_NFC=n to gate off.
 
 config ZIGBEE_APP_TX_POWER
 	int "Zigbee TX power (dBm)"

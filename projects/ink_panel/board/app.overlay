@@ -123,8 +123,9 @@
 	status = "disabled";
 };
 
+/* 片内 NFCT Tag：P1.02=NFC1 / P1.03=NFC2（FPC2）；关功能靠 CONFIG_INK_PANEL_NFC=n */
 &nfct {
-	status = "disabled";
+	status = "okay";
 };
 
 /* DK onboard MX25 SPI NOR — not present on EVT wiring */

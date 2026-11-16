@@ -50,3 +50,7 @@ EVT 自有板 bring-up。脚手架来自 `zigbee_ed`。
 依赖与 `zigbee_ed` 相同：`NCS_ZIGBEE_ROOT` → ncs-zigbee v1.4.0。
 
 期望串口：`ink_panel boot` / `ink_panel ok` / `zigbee: steering`（BTN1 后）。
+
+墨水屏：`prj.conf` 里 `CONFIG_INK_PANEL_EPD=n`（暂关，不编 epd、不 smoke）。要开屏改 `y` 后重编。
+
+NFC（片内 NFCT T2T）：`CONFIG_INK_PANEL_NFC=y`。期望串口 `nfc: bringup ok`；手机靠近见 `nfc: field on` / `data read` / `field off`；读到 Text `ink_panel NFC ok`。关改 `n`。

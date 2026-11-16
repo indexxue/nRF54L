@@ -9,15 +9,23 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/sys/util.h>
 
 #include "board.h"
 #include "button.h"
 #include "cap1203_board.h"
-#include "epd_board.h"
 #include "event.h"
 #include "led_scene.h"
 #include "npm1300_board.h"
 #include "nvs.h"
+
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
+#include "epd_board.h"
+#endif
+
+#if IS_ENABLED(CONFIG_INK_PANEL_NFC)
+#include "nfc_board.h"
+#endif
 
 static zigbee_app_state_t s_zb_state = ZIGBEE_APP_STATE_IDLE;
 
@@ -131,8 +139,20 @@ status_t app_init(void)
 	if (cap1203_board_bringup() != 0) {
 		printk("cap1203 bringup fail\n");
 	}
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
 	/* bringup+全刷在 epd_smoke 线程，避免堵死 Zigbee/LED */
 	epd_board_smoke_start();
+#else
+	printk("epd: disabled (CONFIG_INK_PANEL_EPD=n)\n");
+#endif
+
+#if IS_ENABLED(CONFIG_INK_PANEL_NFC)
+	if (nfc_board_bringup() != STATUS_OK) {
+		printk("nfc: skip (bringup failed)\n");
+	}
+#else
+	printk("nfc: disabled (CONFIG_INK_PANEL_NFC=n)\n");
+#endif
 
 	st = zigbee_app_start();
 	if (st != STATUS_OK) {
@@ -153,6 +173,9 @@ void app_run(void)
 		start_poll();
 		app_handle_button();
 		app_handle_zigbee_evt();
+#if IS_ENABLED(CONFIG_INK_PANEL_NFC)
+		nfc_board_poll();
+#endif
 		k_msleep(20);
 	}
 }
