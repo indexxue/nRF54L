@@ -1,9 +1,9 @@
 /*
- * zigbee_ed — LED/按键 + Zigbee ED + OnOff Server；无 BLE/EPD。
+ * zigbee_ed — LED/按键 + Zigbee ED + OnOff Server + 可选 4.2" EPD 文本。
  *
  * BTN1 短按 → 60s 配网窗 + Steering；BTN1 长按 ≈5s → boot_mode=factory 进厂测；
  * BTN2 双击 → leave；BTN2 长按 3s → 擦 ZBOSS NVRAM 并重启。
- * 网关 znp light → EP1 OnOff → 板载绿灯 + light: on|off
+ * 涂鸦 OnOff → LED_G；DispText(0xFC10) → EPD 文本（独立线程）
  */
 
 #include "start.h"
@@ -12,6 +12,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/sys/util.h>
 
 #include "board.h"
 #include "button.h"
@@ -20,6 +21,10 @@
 #include "led_scene.h"
 #include "log.h"
 #include "nvs.h"
+
+#if IS_ENABLED(CONFIG_ZIGBEE_ED_EPD)
+#include "epd_board.h"
+#endif
 
 static zigbee_app_state_t s_zb_state = ZIGBEE_APP_STATE_IDLE;
 static bool s_light_on;
@@ -199,6 +204,13 @@ status_t app_init(void)
 		LOG_ERROR("zigbee_app_start failed st=%d", (int)st);
 		return st;
 	}
+
+#if IS_ENABLED(CONFIG_ZIGBEE_ED_EPD)
+	/* 刷屏在 epd 线程；文本由 Zigbee DispText 入队 */
+	epd_board_start();
+#else
+	printk("epd: disabled (CONFIG_ZIGBEE_ED_EPD=n)\n");
+#endif
 
 	s_light_on = false;
 	app_zb_led_apply(ZIGBEE_APP_STATE_IDLE);

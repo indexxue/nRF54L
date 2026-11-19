@@ -1,9 +1,8 @@
 /**
  * @file zigbee_device.h
- * @brief 本工程 Zigbee 设备描述：EP 上的 Basic + Identify + OnOff Server 声明宏。
+ * @brief EP1：Basic + Identify + OnOff Server；DispText(0xFC10) 由 EP handler 收（无簇表项）。
  *
- * 仅含 ZBOSS 设备/端点宏，无业务逻辑；实现与回调见 zigbee_app.c。
- * 源自 Nordic HA On/Off Light 样例模式，宏名保留 ZB_* 以对接栈。
+ * 对拍涂鸦：OnOff 灯 + 自定义文本命令；见 doc/tuya_ed_zcl_mapping.md。
  *
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
@@ -11,12 +10,23 @@
 #ifndef ZIGBEE_DEMO_ZIGBEE_DEVICE_H
 #define ZIGBEE_DEMO_ZIGBEE_DEVICE_H
 
-/** HA On/Off Light Device ID */
+/** HA 设备类型：On/Off Light（Zigbee Cluster Library Device ID）。 */
 #define ZB_ON_OFF_LIGHT_DEVICE_ID 0x0100
 
+/** 设备版本号，填入 Simple Descriptor 的 DeviceVersion 字段。 */
 #define ZB_DEVICE_VER_ON_OFF_LIGHT 0
 
+/**
+ * 墨水屏文本簇（厂商自定义）。不进 ZCL 簇表（避免缺 ROLE_INIT）；
+ * 由 ZB_AF_SET_ENDPOINT_HANDLER 按 cluster_id 拦截。
+ * 涂鸦转换：ep=1 cluster=0xFC10 cmd=0x00 payload=[len]+ASCII
+ */
+#define ZB_ZCL_CLUSTER_ID_DISP_TEXT 0xFC10U
+#define ZB_ZCL_CMD_DISP_TEXT_SET 0x00U
+
+/** Server 侧入簇个数：Basic + Identify + OnOff。 */
 #define ZB_ON_OFF_LIGHT_IN_CLUSTER_NUM 3
+/** Client 侧出簇个数：本灯设备不主动当 Client，故为 0。 */
 #define ZB_ON_OFF_LIGHT_OUT_CLUSTER_NUM 0
 
 #define ZB_ON_OFF_LIGHT_CLUSTER_NUM \
@@ -24,9 +34,6 @@
 
 #define ZB_ON_OFF_LIGHT_REPORT_ATTR_COUNT ZB_ZCL_ON_OFF_REPORT_ATTR_COUNT
 
-/**
- * @brief Declare cluster list for On/Off Light (Server role)
- */
 #define ZB_DECLARE_ON_OFF_LIGHT_CLUSTER_LIST(cluster_list_name, basic_attr_list,               \
 					     identify_attr_list, on_off_attr_list)             \
 	zb_zcl_cluster_desc_t cluster_list_name[] = {                                          \

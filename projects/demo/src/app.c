@@ -21,7 +21,8 @@ status_t app_init(void)
 	LOG_INFO("demo app_init ok hw=%s bmode=%u (expect slot0/image-0)",
 		 device_profile_hardware_name(device_profile_hardware_id()),
 		 (unsigned)bmode);
-	printk("demo printk ok (uart20) bmode=%u image-0\n", (unsigned)bmode);
+	printk("demo printk ok (uart00 EVT LED=P1.13) bmode=%u image-0\n",
+	       (unsigned)bmode);
 	/* nordic-flpr: cpuapp copies FLPR image to SRAM and starts RISC-V VPR */
 	LOG_INFO("FLPR (RISC-V) co-processor enabled — see remote/ + uart30");
 	return STATUS_OK;

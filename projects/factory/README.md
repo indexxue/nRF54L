@@ -80,6 +80,20 @@ slot0 已是合法 APP 时：
 | 角色 | TOOL=临时 Coord；UUT=被测（实现为 **Router**，因单 hex 非 ED 库） |
 | 上电 | 清 zboss 网 NV；**保留** Settings（sn 等）；默认 idle（无 RF） |
 | 重启 | 临时网与 allow 会话**不**恢复；须重新组网 |
+| NWK Key | TOOL form 前固定为 Nordic 示例钥（便于抓包）；**仅厂测** |
+
+### Wireshark 解密（厂测抓包）
+
+TOOL formed 时应打印 `zbft: nwk_key forced … key=ab:cd:ef:01:…`（以串口 **实际 dump 的 key=** 为准）。DUT joined 后可能还有 `diag nwk_key broadcast`（Wireshark 可自动学钥）。
+
+在 Wireshark：**编辑 → 首选项 → 协议 → ZigBee → 预配置密钥**，把串口 dump 的 16 字节加进去（Byte order = **Normal**）。若 forced 成功，即为：
+
+| 项 | 值 |
+|----|-----|
+| Key | `AB:CD:EF:01:23:45:67:89:00:00:00:00:00:00:00:00` |
+| Byte order | Normal |
+
+Security Level：`AES-128 Encryption, 32-bit Integrity Protection` → 保存 → **查看 → 重新加载** → 再看 `zbcmd sn` 明文（Cluster `0xBEEF`）。
 
 ### 最简双机步骤
 

@@ -2,8 +2,8 @@
  * @file epd_board.c
  * @brief ink_panel EVT：GPIO bit-bang → cbb/epd（WS 4.2" B V2 BWR）
  *
- * spi20 首次传输会在 nRF54 SPIM SCK 预置电平路径上 Bus Fault（BFAR=0x8）；
- * 冒烟阶段改 bit-bang。控制台仍用 uart00。BUSY 卡死则改固定延时。
+ * 板级仅 DT 脚 + nPM1300 供电；BWR demo 走 cbb epd_display_demo_bwr_fill（与 eink_tag 共用）。
+ * SPIM 在本板 Bus Fault，故只用 bit-bang。
  */
 
 #include "epd_board.h"
@@ -15,6 +15,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 
 #include "epd_display.h"
@@ -23,8 +24,10 @@
 #define ZUSER DT_PATH(zephyr_user)
 
 #define EPD_PLANE_CAPACITY 15000U /* 400×300/8 */
-#define EPD_PWR_SETTLE_MS  20U
+#define EPD_PWR_SETTLE_MS  50U /* 等 LDSW2 3.3V 起来 */
 #define EPD_BUSY_PROBE_MS  2000U
+/** 对齐 eink_tag：BUSY 不可用时全刷后再等多一截 */
+#define EPD_FRAME_SETTLE_MS 10000U
 
 static const struct gpio_dt_spec s_sck = GPIO_DT_SPEC_GET(ZUSER, epd_sck_gpios);
 static const struct gpio_dt_spec s_mosi = GPIO_DT_SPEC_GET(ZUSER, epd_mosi_gpios);
@@ -38,6 +41,7 @@ static uint8_t s_red[EPD_PLANE_CAPACITY];
 static epd_display_t s_disp;
 static bool s_ready;
 static bool s_busy_usable;
+static atomic_t s_refreshing;
 
 K_THREAD_STACK_DEFINE(s_epd_stack, 4096);
 static struct k_thread s_epd_thread;
@@ -108,28 +112,29 @@ static void epd_power_off(void)
 
 static status_t epd_gpio_init(void)
 {
+	/* 对齐 eink_tag：INACTIVE/ACTIVE + BUSY 上拉（勿对 ACTIVE_LOW CS 用 OUTPUT_HIGH） */
 	if (!gpio_is_ready_dt(&s_sck) || !gpio_is_ready_dt(&s_mosi) ||
 	    !gpio_is_ready_dt(&s_cs) || !gpio_is_ready_dt(&s_dc) ||
 	    !gpio_is_ready_dt(&s_rst) || !gpio_is_ready_dt(&s_busy)) {
 		printk("epd gpio not ready\n");
 		return STATUS_FAIL;
 	}
-	if (gpio_pin_configure_dt(&s_sck, GPIO_OUTPUT_LOW) != 0) {
+	if (gpio_pin_configure_dt(&s_sck, GPIO_OUTPUT_INACTIVE) != 0) {
 		return STATUS_FAIL;
 	}
-	if (gpio_pin_configure_dt(&s_mosi, GPIO_OUTPUT_LOW) != 0) {
+	if (gpio_pin_configure_dt(&s_mosi, GPIO_OUTPUT_INACTIVE) != 0) {
 		return STATUS_FAIL;
 	}
-	if (gpio_pin_configure_dt(&s_cs, GPIO_OUTPUT_HIGH) != 0) {
+	if (gpio_pin_configure_dt(&s_cs, GPIO_OUTPUT_INACTIVE) != 0) {
 		return STATUS_FAIL;
 	}
-	if (gpio_pin_configure_dt(&s_dc, GPIO_OUTPUT_LOW) != 0) {
+	if (gpio_pin_configure_dt(&s_dc, GPIO_OUTPUT_INACTIVE) != 0) {
 		return STATUS_FAIL;
 	}
-	if (gpio_pin_configure_dt(&s_rst, GPIO_OUTPUT_HIGH) != 0) {
+	if (gpio_pin_configure_dt(&s_rst, GPIO_OUTPUT_ACTIVE) != 0) {
 		return STATUS_FAIL;
 	}
-	if (gpio_pin_configure_dt(&s_busy, GPIO_INPUT) != 0) {
+	if (gpio_pin_configure_dt(&s_busy, GPIO_INPUT | GPIO_PULL_UP) != 0) {
 		return STATUS_FAIL;
 	}
 	epd_cs(1);
@@ -137,30 +142,180 @@ static status_t epd_gpio_init(void)
 	return STATUS_OK;
 }
 
+/**
+ * 等 BUSY 回到空闲（active-high → 读到 0）。
+ * @return true=空闲；false=超时仍高（断线/未供电时常被 R18 上拉成高）
+ */
+static bool epd_wait_busy_idle(uint32_t timeout_ms, uint32_t *waited_out)
+{
+	uint32_t waited = 0U;
+
+	while ((epd_busy() != 0) && (waited < timeout_ms)) {
+		k_msleep(50);
+		waited += 50U;
+	}
+	if (waited_out != NULL) {
+		*waited_out = waited;
+	}
+	return epd_busy() == 0;
+}
+
 static bool epd_busy_probe(void)
 {
 	uint32_t waited = 0U;
+	uint32_t sample = 0U;
+	bool saw_high = false;
 
 	printk("epd busy raw=%d before rst\n", epd_busy());
 
 	epd_rst(0);
 	k_msleep(10);
 	epd_rst(1);
-	k_msleep(20);
-	printk("epd busy raw=%d after rst\n", epd_busy());
+	k_msleep(5);
 
-	while ((epd_busy() != 0) && (waited < EPD_BUSY_PROBE_MS)) {
-		k_msleep(50);
-		waited += 50U;
+	/* 复位后短窗内应能看到 BUSY 变高；一直为 0 = 线死/无板上拉 → 不可用 */
+	while (sample < 500U) {
+		if (epd_busy() != 0) {
+			saw_high = true;
+			break;
+		}
+		k_msleep(5);
+		sample += 5U;
 	}
+	printk("epd busy after rst saw_high=%d raw=%d\n", saw_high ? 1 : 0, epd_busy());
 
-	if (epd_busy() != 0) {
-		printk("epd busy stuck HIGH %ums — use fixed wait\n", (unsigned)waited);
+	if (!epd_wait_busy_idle(EPD_BUSY_PROBE_MS, &waited)) {
+		printk("epd busy stuck HIGH %ums — use fixed wait (eink_tag path)\n",
+		       (unsigned)waited);
 		return false;
 	}
 
-	printk("epd busy idle ok waited=%ums\n", (unsigned)waited);
+	if (!saw_high) {
+		/*
+		 * 与 eink_tag 差异补丁：一直空闲(LOW)却从未变高，
+		 * 若仍挂 read_busy，全刷 wait_idle 会 0ms 返回 → 屏不更新。
+		 * 强制走库内 ~16s 固定延时。
+		 */
+		printk("epd busy never HIGH — disable read_busy, use fixed ~16s wait\n");
+		return false;
+	}
+
+	printk("epd busy idle ok waited=%ums (usable)\n", (unsigned)waited);
 	return true;
+}
+
+/** SSD168x SWRESET（写命令 0x12）；无 MISO，只能靠 BUSY 看是否吃进命令 */
+static void epd_bb_write_cmd(uint8_t cmd)
+{
+	epd_dc(0);
+	epd_cs(0);
+	epd_bb_tx_byte(cmd);
+	epd_cs(1);
+}
+
+status_t epd_board_hw_scan(void)
+{
+	int busy_pre_pwr;
+	int busy_post_pwr;
+	int busy_post_rst;
+	int busy_saw_high;
+	uint32_t waited = 0U;
+	bool rst_ok;
+	bool swreset_ok;
+	uint8_t pat[4] = {0xA5U, 0x5AU, 0xF0U, 0x0FU};
+
+	printk("==== EPD HW SCAN (bitbang, no MISO / no SPI addr scan) ====\n");
+	printk("epd pins: SCK=P1.08 MOSI=P1.09 CS=P1.10 DC=P1.05 RST=P1.06 BUSY=P1.07\n");
+	printk("epd note: BUSY R18 pull-up to VDD_SoC; absent panel stays HIGH\n");
+
+	if (epd_gpio_init() != STATUS_OK) {
+		printk("epd SCAN: GPIO FAIL\n");
+		printk("==== EPD HW SCAN RESULT: ABSENT (gpio) ====\n");
+		return STATUS_FAIL;
+	}
+
+	busy_pre_pwr = epd_busy();
+	printk("epd SCAN: BUSY=%d before EPD power\n", busy_pre_pwr);
+
+	epd_power_on();
+	busy_post_pwr = epd_busy();
+	printk("epd SCAN: BUSY=%d after EPD power (+%ums settle)\n", busy_post_pwr,
+	       (unsigned)EPD_PWR_SETTLE_MS);
+
+	/* 示波/万用表可看：SCK/MOSI/CS 翻转，确认走线 */
+	printk("epd SCAN: toggle SCK/MOSI/CS 3x (scope optional)\n");
+	for (int i = 0; i < 3; i++) {
+		(void)gpio_pin_set_raw(s_sck.port, s_sck.pin, 0);
+		(void)gpio_pin_set_raw(s_mosi.port, s_mosi.pin, 0);
+		epd_cs(0);
+		k_msleep(50);
+		(void)gpio_pin_set_raw(s_sck.port, s_sck.pin, 1);
+		(void)gpio_pin_set_raw(s_mosi.port, s_mosi.pin, 1);
+		epd_cs(1);
+		k_msleep(50);
+	}
+	(void)gpio_pin_set_raw(s_sck.port, s_sck.pin, 0);
+	(void)gpio_pin_set_raw(s_mosi.port, s_mosi.pin, 0);
+	epd_cs(1);
+
+	epd_cs(0);
+	epd_spi_tx(pat, sizeof(pat));
+	epd_cs(1);
+	printk("epd SCAN: bitbang burst 0xA5 5A F0 0F done\n");
+
+	/* --- 步骤1：硬件复位，看 BUSY 是否被面板拉回空闲(LOW) --- */
+	epd_rst(0);
+	k_msleep(10);
+	epd_rst(1);
+	k_msleep(5);
+	busy_saw_high = 0;
+	{
+		uint32_t sample = 0U;
+
+		while (sample < 200U) {
+			if (epd_busy() != 0) {
+				busy_saw_high = 1;
+				break;
+			}
+			k_msleep(5);
+			sample += 5U;
+		}
+	}
+	k_msleep(15);
+	busy_post_rst = epd_busy();
+	printk("epd SCAN: after RST busy_saw_high=%d busy_now=%d\n", busy_saw_high,
+	       busy_post_rst);
+
+	rst_ok = epd_wait_busy_idle(EPD_BUSY_PROBE_MS, &waited);
+	printk("epd SCAN: RST->idle %s waited=%ums busy=%d\n", rst_ok ? "OK" : "TIMEOUT",
+	       (unsigned)waited, epd_busy());
+
+	/* --- 步骤2：SWRESET 0x12，再等空闲（面板在才应响应） --- */
+	epd_bb_write_cmd(0x12U);
+	k_msleep(10);
+	swreset_ok = epd_wait_busy_idle(EPD_BUSY_PROBE_MS, &waited);
+	printk("epd SCAN: SWRESET(0x12)->idle %s waited=%ums busy=%d\n",
+	       swreset_ok ? "OK" : "TIMEOUT", (unsigned)waited, epd_busy());
+
+	/*
+	 * 判定（对齐 eink_tag 经验）：
+	 * - 无面板 + 上拉 → BUSY 常高 → rst/swreset 超时 → ABSENT
+	 * - 有面板 → 应见过 HIGH，再回到 LOW
+	 * - 一直 LOW 从未 HIGH → 线异常；仍允许 bringup 走固定延时，故返回 OK 但打 WARN
+	 */
+	if (busy_saw_high && (rst_ok || swreset_ok)) {
+		printk("==== EPD HW SCAN RESULT: PRESENT (BUSY toggled) ====\n");
+		return STATUS_OK;
+	}
+	if ((rst_ok || swreset_ok) && !busy_saw_high) {
+		printk("epd SCAN: WARN always-LOW (no HIGH pulse) — continue with fixed wait\n");
+		printk("==== EPD HW SCAN RESULT: PRESENT? (busy pin suspect) ====\n");
+		return STATUS_OK;
+	}
+
+	printk("epd SCAN: BUSY never idle — check FPC/power/LS2/EPD_PWR_EN/wiring\n");
+	printk("==== EPD HW SCAN RESULT: ABSENT (no BUSY response) ====\n");
+	return STATUS_FAIL;
 }
 
 status_t epd_board_bringup(void)
@@ -216,73 +371,99 @@ status_t epd_board_bringup(void)
 
 bool epd_board_is_ready(void)
 {
-	return s_ready;
+	return s_ready && epd_display_is_ready(&s_disp);
+}
+
+bool epd_board_is_busy(void)
+{
+	return atomic_get(&s_refreshing) != 0;
+}
+
+static status_t epd_refresh_step(const char *name, epd_display_status_t (*fn)(epd_display_t *))
+{
+	int64_t t0;
+	int64_t dt;
+	epd_display_status_t st;
+
+	t0 = k_uptime_get();
+	st = fn(&s_disp);
+	if (!s_busy_usable) {
+		k_msleep(EPD_FRAME_SETTLE_MS);
+	}
+	dt = k_uptime_get() - t0;
+
+	printk("epd: %s st=%d(%s) dt=%lldms busy_ok=%d\n", name, (int)st,
+	       (st == EPD_DISPLAY_OK)               ? "ok"
+	       : (st == EPD_DISPLAY_ERROR_BUSY)     ? "BUSY_TIMEOUT"
+	       : (st == EPD_DISPLAY_ERROR_PARAM)    ? "PARAM"
+	       : (st == EPD_DISPLAY_ERROR_NOT_INIT) ? "NOT_INIT"
+						    : "ERR",
+	       (long long)dt, s_busy_usable ? 1 : 0);
+
+	return (st == EPD_DISPLAY_OK) ? STATUS_OK : STATUS_FAIL;
+}
+
+status_t epd_board_test_run(void)
+{
+	status_t st;
+
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+
+	if (atomic_get(&s_refreshing) == 0) {
+		if (atomic_cas(&s_refreshing, 0, 1) == false) {
+			printk("epd: demo skipped (refresh busy)\n");
+			return STATUS_INVALID_STATE;
+		}
+	}
+
+	printk("epd: draw BWR demo (chars + black/red/white), one refresh\n");
+	epd_display_demo_bwr_fill(&s_disp, "ink_panel", "4.2in BWR demo",
+				  epd_panel_ws_4in2b_v2.name);
+
+	st = epd_refresh_step("demo", epd_display_refresh);
+	atomic_set(&s_refreshing, 0);
+	if (st != STATUS_OK) {
+		return st;
+	}
+
+	printk("epd: demo done — should show text + 3 colors\n");
+	return STATUS_OK;
 }
 
 static void epd_smoke_thread(void *a, void *b, void *c)
 {
-	uint16_t w;
-	uint16_t h;
-	uint16_t x_max;
-	uint16_t y_max;
-	uint16_t col_w;
-	const uint16_t title_h = 40U;
-	uint16_t band_y0;
-	uint16_t band_y1;
-	epd_display_status_t st;
-	int64_t t0;
+	status_t st;
 
 	ARG_UNUSED(a);
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
-	if (epd_board_bringup() != STATUS_OK) {
-		printk("epd smoke: bringup fail\n");
+	printk("epd: worker start\n");
+
+	if (epd_board_hw_scan() != STATUS_OK) {
+		printk("epd: HW ABSENT — skip demo\n");
 		return;
 	}
 
-	w = epd_display_width(&s_disp);
-	h = epd_display_height(&s_disp);
-	x_max = (uint16_t)(w - 1U);
-	y_max = (uint16_t)(h - 1U);
-	col_w = (uint16_t)(w / 3U);
-	band_y0 = 72U;
-	band_y1 = (uint16_t)(h - 56U);
+	st = epd_board_bringup();
+	if (st != STATUS_OK) {
+		printk("epd: bringup failed: %d\n", (int)st);
+		return;
+	}
 
-	printk("epd smoke: draw BWR demo...\n");
-	epd_display_clear_buffer(&s_disp, EPD_COLOR_WHITE);
+	printk("epd: ready board=%ux%u panel=%s — boot demo\n",
+	       (unsigned)epd_display_width(&s_disp), (unsigned)epd_display_height(&s_disp),
+	       epd_panel_ws_4in2b_v2.name);
 
-	epd_display_fill_rect(&s_disp, 0U, 0U, x_max, (uint16_t)(title_h - 1U), EPD_COLOR_BLACK);
-	epd_display_draw_string(&s_disp, 4U, 6U, "ink_panel", EPD_FONT_16, EPD_COLOR_WHITE);
-	epd_display_draw_string(&s_disp, 4U, 24U, "4.2in BWR smoke", EPD_FONT_12, EPD_COLOR_WHITE);
-	epd_display_draw_string(&s_disp, 4U, 48U, "Hello nRF54L15!", EPD_FONT_16, EPD_COLOR_BLACK);
-
-	epd_display_fill_rect(&s_disp, 0U, band_y0, (uint16_t)(col_w - 2U), band_y1, EPD_COLOR_BLACK);
-	epd_display_draw_string(&s_disp, 4U, (uint16_t)(band_y0 + 16U), "BLACK", EPD_FONT_12,
-				EPD_COLOR_WHITE);
-
-	epd_display_fill_rect(&s_disp, col_w, band_y0, (uint16_t)(col_w * 2U - 2U), band_y1,
-			      EPD_COLOR_RED);
-	epd_display_draw_string(&s_disp, (uint16_t)(col_w + 4U), (uint16_t)(band_y0 + 16U), "RED",
-				EPD_FONT_12, EPD_COLOR_WHITE);
-
-	epd_display_fill_rect(&s_disp, (uint16_t)(col_w * 2U), band_y0, x_max, band_y1,
-			      EPD_COLOR_WHITE);
-	epd_display_draw_rect(&s_disp, (uint16_t)(col_w * 2U), band_y0, x_max, band_y1,
-			      EPD_COLOR_BLACK);
-	epd_display_draw_string(&s_disp, (uint16_t)(col_w * 2U + 2U), (uint16_t)(band_y0 + 16U),
-				"WHITE", EPD_FONT_12, EPD_COLOR_BLACK);
-
-	epd_display_draw_string(&s_disp, 4U, (uint16_t)(band_y1 + 8U), "BLACK / RED / WHITE",
-				EPD_FONT_12, EPD_COLOR_BLACK);
-	epd_display_draw_string(&s_disp, 4U, (uint16_t)(band_y1 + 24U), "WS_4IN2B_V2", EPD_FONT_12,
-				EPD_COLOR_RED);
-	epd_display_draw_rect(&s_disp, 0U, 0U, x_max, y_max, EPD_COLOR_BLACK);
-
-	t0 = k_uptime_get();
-	st = epd_display_refresh(&s_disp);
-	printk("epd smoke: refresh st=%d dt=%lldms\n", (int)st,
-	       (long long)(k_uptime_get() - t0));
+	printk("epd: boot demo start\n");
+	st = epd_board_test_run();
+	if (st != STATUS_OK) {
+		printk("epd: boot demo failed: %d\n", (int)st);
+	} else {
+		printk("epd: boot demo done\n");
+	}
 }
 
 void epd_board_smoke_start(void)
@@ -291,7 +472,9 @@ void epd_board_smoke_start(void)
 		return;
 	}
 	s_smoke_started = true;
+	atomic_set(&s_refreshing, 0);
 	(void)k_thread_create(&s_epd_thread, s_epd_stack, K_THREAD_STACK_SIZEOF(s_epd_stack),
-			      epd_smoke_thread, NULL, NULL, NULL, 7, 0, K_NO_WAIT);
-	k_thread_name_set(&s_epd_thread, "epd_smoke");
+			      epd_smoke_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
+	k_thread_name_set(&s_epd_thread, "epd");
+	printk("epd: async worker created\n");
 }

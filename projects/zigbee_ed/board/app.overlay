@@ -1,9 +1,10 @@
 /*
- * zigbee_demo — eink_tag rev_b GPIO + Zigbee R23 nRF54L15 分区/定时器
+ * zigbee_ed — eink_tag rev_b GPIO + Zigbee R23 + EPD 4.2"（bit-bang）
  *
  * UART20: TX=P1.04  RX=P1.05
  * LED_G/B: P2.08 / P2.09 ACTIVE_LOW
  * BTN1/2:  P0.00 / P0.01 ACTIVE_LOW + PULL_UP
+ * EPD:     SCK=P2.01 MOSI=P2.02 CS=P2.05 DC=P2.00 RST=P2.03 BUSY=P2.07
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -37,6 +38,15 @@
 	pinctrl-0 = <&uart20_default>;
 	pinctrl-1 = <&uart20_sleep>;
 	pinctrl-names = "default", "sleep";
+};
+
+/* EPD 用 GPIO bit-bang；关掉 DK NOR，避免占脚 */
+&spi00 {
+	status = "disabled";
+};
+
+&mx25r64 {
+	status = "disabled";
 };
 
 /* MCUBoot：勿扩到 1524KB（否则 PM 在 0x165000 后多出 gap）。用板级默认 1428KB。 */
@@ -107,5 +117,10 @@
 	zephyr,user {
 		btn1-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 		btn2-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+
+		/* rev_b EPD：DC/RST/BUSY 走 DT；SCK/MOSI/CS 在 epd_board 内 bit-bang */
+		epd-dc-gpios = <&gpio2 0 GPIO_ACTIVE_HIGH>;
+		epd-rst-gpios = <&gpio2 3 GPIO_ACTIVE_HIGH>;
+		epd-busy-gpios = <&gpio2 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
 	};
 };

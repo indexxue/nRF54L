@@ -3,7 +3,7 @@
 Zigbee **End Device** + **OnOff Server（EP1）** 联调：入网 / 退网 + 网关 `znp light` 控板载绿灯。  
 原工程名 **`zigbee_demo`**。当前联调固件 **0.2.3**（见 `firmware/0.2.3/`）。Router 联调见 [`../zigbee_router`](../zigbee_router/)。
 
-板级脚取自 `eink_tag` rev_b（UART / LED×2 / BTN×2）。**无** BLE、EPD、PN5180。
+板级脚取自 `eink_tag` rev_b（UART / LED×2 / BTN×2 + **4.2" EPD bit-bang**）。**无** BLE、PN5180。
 
 | 层 | 路径 |
 |----|------|
@@ -37,7 +37,8 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | UART TX / RX | P1.04 / P1.05 |
 | LED_G / LED_B | P2.08 / P2.09（ACTIVE_LOW）；**控灯用 LED_G** |
 | BTN1 / BTN2 | P0.00 / P0.01（ACTIVE_LOW） |
-| Zigbee 扫描 | 掩码 **11/15/20/25**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x02108800`） |
+| EPD 4.2" | SCK/MOSI/CS P2.01/02/05；DC/RST/BUSY P2.00/03/07（`CONFIG_ZIGBEE_ED_EPD`） |
+| Zigbee 扫描 | 掩码 **11–26**（`CONFIG_ZIGBEE_CHANNEL_MASK=0x07FFF800`；涂鸦联调） |
 | Zigbee TX 功率 | `CONFIG_ZIGBEE_APP_TX_POWER`（默认 **+8** dBm；`lib/zigbee/zigbee_app.c` 起栈 apply） |
 
 **MCUBoot** 已接（swap-move，无 FLPR）：slot0=本工程，slot1=factory；`pm_static` 含 `zboss_nvram` + `boot_share`。BTN1 长按 ≈5s → `boot_mode=factory` 进厂测。
@@ -71,6 +72,19 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 | ZCL On | LED_G 亮 | `light: on` |
 | ZCL Off | LED_G 灭 | `light: off` |
 
+### 墨水屏纯文本（涂鸦 / ZCL）
+
+串口 **不再**提供 `text` 命令。空中约定：
+
+| 项 | 值 |
+|----|-----|
+| EP | **1** |
+| Cluster | **`0xFC10`**（DispText） |
+| Cmd | **`0x00`** SetText |
+| Payload | ZCL 字符串：`[len][ASCII…]`（len≤96） |
+
+涂鸦新品：自定义 **string DP** → 转换文件下行映射到上表。设备串口见 `zigbee: disp_text len=…` 后刷屏。OnOff 绿灯路径不变。
+
 同网 rejoin（契约 [`zigbee_rejoin_contract.md`](../../doc/zigbee_rejoin_contract.md) §2.3）：协调器整机掉电同 ch/pan 后应自动 `rejoin`，无需清本机 NV；未入网仍仅 BTN1 显式入网。
 
 控灯可达（与 Router 对齐）：联调 `rx_on_when_idle=1`；空中到站见 `zigbee: zcl onoff=`；网关需烧录带 AF ACK+路由发现的 ZigBridge；leave 后再入网用**新 nwk** 控灯。
@@ -100,23 +114,34 @@ git clone --branch v1.4.0 https://github.com/nrfconnect/ncs-zigbee.git D:\ncs\tm
 
 ## 涂鸦标准接入（方案 B）
 
-子设备只认标准 ZCL；云与 App 经**涂鸦 Zigbee 多模网关**。映射与建品填空见 [`doc/tuya_ed_zcl_mapping.md`](../../doc/tuya_ed_zcl_mapping.md)。
+子设备只认标准 ZCL；云与 App 经**涂鸦 Zigbee 多模网关**。映射见 [`doc/tuya_ed_zcl_mapping.md`](../../doc/tuya_ed_zcl_mapping.md)。
 
-**平台侧（T0，需账号）**：IoT 建 **标准 Zigbee** 单路开关灯产品（勿选模组 MCU）→ 把 PID、manufacturer、model、开关 DP 填进映射表 §1 / §3。
+| 项 | 联调值 |
+|----|--------|
+| 网关 | **LQ-WG03** |
+| 主产品 | **显示板** PID **`c0rpr0hl`** · key **`key3prr8`** |
+| DP | **101** `display_text` → DispText；**102** `switch_led` → OnOff |
+| Basic | mfr=`_TZ3000_c0rpr0hl` · model=`TS0601`（涂鸦认 PID） |
+| 配网指示 | **LED_B** 慢闪（PAIRING） |
+| App 文本 | 屏刷 + `zigbee: disp_text len=…`（须配平台转换文件） |
+| App 开关 | **LED_G** + `light: on\|off` |
+| 扫描 | **11–26**（`0x07FFF800`） |
 
-**设备侧粗流程（网关到手且映射填齐后）**：
+**验收步骤**：
 
-1. 网关配网并在涂鸦智能 / Smart Life 上线  
-2. App 添加设备 → 本机 **BTN1** 开 60s 配网窗  
-3. 绑定到本 PID 产品后，App 开关 → LED_G + `light: on|off`  
-4. 失败：BTN2 双击 leave，或长按擦 `zboss_nvram` 后重来  
+1. 烧本工程；串口确认 `mfr=_TZ3000_c0rpr0hl model=TS0601`  
+2. 平台已为 DP101/102 配好 Zigbee 转换并发布（见映射表 §3.1）  
+3. LQ-WG03 在线 → App 添加 → 本机 **BTN1** 配网  
+4. 绑定到 **显示板** `c0rpr0hl`（勿再绑旧灯 `agbfpcdx`）  
+5. App 改「显示文本」→ 刷屏；App 开关 → 绿灯  
+6. 失败：BTN2 双击 leave，或长按擦 NV；检查转换文件是否生效  
 
-PID 未定时固件可用占位身份联调；**量产 release 不得保留占位**。
+量产前收窄 `CHANNEL_MASK`；灯 PID `agbfpcdx` 仅作历史归档。
 
 ## ZigBridge-EM 联调
 
 1. 网关：确认 `znp channel`（或清网轮换后记下 ch）→ `znp join on 180`  
-2. 本机：BTN1 短按（多信道扫描，可跟上网关 11/15/20/25）→ 对照 IEEE  
+2. 本机：BTN1 短按（多信道扫描 11–26，覆盖 ZigBridge 默认 11/15/20/25）→ 对照 IEEE  
 3. 网关：`znp light on` / `off` / `toggle` → 看绿灯与 `light: …`  
 4. BTN2 双击 leave，再入网 + 再控灯 ≥1 次  
 5. （建议）网关长按清网换信道后，子设备 leave 再 steer，确认仍能入网  

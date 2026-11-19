@@ -168,6 +168,20 @@ function Get-ProjectCmakeExtraArgs {
             $argsList += "-D${Project}_SNIPPET=$joined"
         }
     }
+    # Optional projects/<name>/EXTRA_CONF — one prj_*.conf overlay per line.
+    $extraConfFile = Join-Path $AppDir "EXTRA_CONF"
+    if (Test-Path $extraConfFile) {
+        $confNames = @(
+            Get-Content -Path $extraConfFile |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -ne "" -and -not $_.StartsWith("#") }
+        )
+        if ($confNames.Count -gt 0) {
+            $joined = $confNames -join ";"
+            $argsList += "-DEXTRA_CONF_FILE=$joined"
+            Write-Host "EXTRA_CONF: $joined"
+        }
+    }
     return $argsList
 }
 

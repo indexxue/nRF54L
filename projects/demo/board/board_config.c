@@ -1,6 +1,6 @@
 /**
  * @file board_config.c
- * @brief demo — UART×1 + LED×2 + FTM 按键 P0.00。
+ * @brief demo — 临时 EVT：UART00 + LED×1(P1.13) + FTM 按键 P0.00。
  */
 
 #include "board.h"
@@ -12,17 +12,15 @@
 #define ZUSER DT_PATH(zephyr_user)
 
 static const struct gpio_dt_spec s_led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
-static const struct gpio_dt_spec s_led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec s_btn_ftm = GPIO_DT_SPEC_GET(ZUSER, btn_ftm_gpios);
 
 static const board_led_spec_t s_leds[] = {
-	{.gpio = &s_led0, .id = 0U, .name = "led0"},
-	{.gpio = &s_led1, .id = 1U, .name = "led1"},
+	{.gpio = &s_led0, .id = 0U, .name = "led_status"},
 };
 
 static const board_uart_spec_t s_uarts[] = {
 	{
-		.dev = DEVICE_DT_GET(DT_NODELABEL(uart20)),
+		.dev = DEVICE_DT_GET(DT_NODELABEL(uart00)),
 		.baud = 115200U,
 		.name = "console",
 	},
@@ -39,7 +37,7 @@ static const board_button_spec_t s_buttons[] = {
 };
 
 static const board_config_t s_board = {
-	.name = "demo_ty_rev_a",
+	.name = "demo_ink_panel_evt",
 	.mask = BOARD_MASK_LED | BOARD_MASK_UART | BOARD_MASK_BUTTON,
 
 	.leds = s_leds,

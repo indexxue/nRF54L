@@ -1,5 +1,13 @@
 # Zigbee ED application options (sourced beside CMakeLists.txt).
 
+config ZIGBEE_ED_EPD
+	bool "Enable 4.2in e-ink (bitbang) + Zigbee DispText"
+	default y
+	help
+	  Waveshare 4.2" B V2 on eink_tag rev_b pins. Worker thread refreshes
+	  on ZCL DispText(0xFC10) SetText from Tuya gateway conversion.
+	  When n, epd_board / cbb/epd are not built.
+
 config ZIGBEE_APP_TX_POWER
 	int "Zigbee TX power (dBm)"
 	range -40 8

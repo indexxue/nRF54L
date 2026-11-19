@@ -25,6 +25,10 @@
 
 #include "zigbee_device.h"
 
+#if IS_ENABLED(CONFIG_ZIGBEE_ED_EPD)
+#include "epd_board.h"
+#endif
+
 LOG_MODULE_REGISTER(zigbee_app, LOG_LEVEL_INF);
 
 #define TEMPLATE_INIT_BASIC_POWER_SOURCE ZB_ZCL_BASIC_POWER_SOURCE_DC_SOURCE
@@ -435,18 +439,75 @@ static void zcl_device_cb(zb_bufid_t bufid)
 	}
 }
 
+/**
+ * DispText(0xFC10) SetText(0x00)：payload 为 ZCL 字符串 [len][bytes]。
+ * 只入队 EPD；返回 ZB_TRUE 表示本帧已消费。
+ */
+static zb_uint8_t zigbee_app_ep_handler(zb_uint8_t param)
+{
+	zb_zcl_parsed_hdr_t *hdr = ZB_BUF_GET_PARAM(param, zb_zcl_parsed_hdr_t);
+	zb_uint8_t *payload;
+	zb_uint16_t plen;
+	zb_uint8_t text_len;
+
+	if ((hdr->profile_id != ZB_AF_HA_PROFILE_ID) ||
+	    (hdr->cluster_id != ZB_ZCL_CLUSTER_ID_DISP_TEXT)) {
+		return ZB_FALSE;
+	}
+
+	if (hdr->cmd_id != ZB_ZCL_CMD_DISP_TEXT_SET) {
+		printk("zigbee: disp_text ignore cmd=0x%02x\n", (unsigned)hdr->cmd_id);
+		zb_buf_free(param);
+		return ZB_TRUE;
+	}
+
+	payload = zb_buf_begin(param);
+	plen = zb_buf_len(param);
+	if ((payload == NULL) || (plen < 1U)) {
+		printk("zigbee: disp_text empty\n");
+		zb_buf_free(param);
+		return ZB_TRUE;
+	}
+
+	text_len = payload[0];
+	if ((zb_uint16_t)(text_len + 1U) > plen) {
+		text_len = (zb_uint8_t)(plen - 1U);
+	}
+
+#if IS_ENABLED(CONFIG_ZIGBEE_ED_EPD)
+	{
+		status_t st = epd_board_text_request((const char *)&payload[1], text_len);
+
+		printk("zigbee: disp_text len=%u st=%d\n", (unsigned)text_len, (int)st);
+	}
+#else
+	printk("zigbee: disp_text len=%u (epd off)\n", (unsigned)text_len);
+#endif
+
+	zb_buf_free(param);
+	return ZB_TRUE;
+}
+
+/** 下一待设功率信道；串行申请 buffer，避免 11–26 一次抢光 out buf。 */
+static uint8_t s_tx_pwr_next_ch;
+static uint8_t s_tx_pwr_ok;
+static uint8_t s_tx_pwr_fail;
+
+static void zigbee_app_tx_power_schedule_next(void);
+
 static void zigbee_app_tx_power_cb(zb_bufid_t param)
 {
 	zb_tx_power_params_t *p = zb_buf_begin(param);
 
 	if (p->status == RET_OK) {
-		printk("zigbee: tx_pwr=%d dBm ch=%u ok\n", (int)p->tx_power,
-		       (unsigned)p->channel);
+		s_tx_pwr_ok++;
 	} else {
+		s_tx_pwr_fail++;
 		printk("zigbee: tx_pwr set fail ch=%u st=%d\n", (unsigned)p->channel,
 		       (int)p->status);
 	}
 	zb_buf_free(param);
+	zigbee_app_tx_power_schedule_next();
 }
 
 static void zigbee_app_tx_power_apply_cb(zb_bufid_t param, zb_uint16_t channel)
@@ -461,26 +522,43 @@ static void zigbee_app_tx_power_apply_cb(zb_bufid_t param, zb_uint16_t channel)
 	ZB_SCHEDULE_APP_CALLBACK(zb_set_tx_power_async, param);
 }
 
-/** Apply CONFIG_ZIGBEE_APP_TX_POWER to every channel in the scan mask. */
-static void zigbee_app_tx_power_apply(void)
+/** 一次只排一个信道的 tx power；上一笔完成后再排下一笔。 */
+static void zigbee_app_tx_power_schedule_next(void)
 {
 	uint32_t mask = CONFIG_ZIGBEE_CHANNEL_MASK;
 	uint8_t ch;
 	zb_ret_t ret;
 
-	printk("zigbee: tx_pwr=%d dBm mask=0x%08x\n", CONFIG_ZIGBEE_APP_TX_POWER,
-	       (unsigned)mask);
-
-	for (ch = ZB_PAGE0_2_4_GHZ_CHANNEL_FROM; ch <= ZB_PAGE0_2_4_GHZ_CHANNEL_TO; ch++) {
+	for (ch = s_tx_pwr_next_ch; ch <= ZB_PAGE0_2_4_GHZ_CHANNEL_TO; ch++) {
 		if ((mask & (1UL << ch)) == 0U) {
 			continue;
 		}
+		s_tx_pwr_next_ch = (uint8_t)(ch + 1U);
 		ret = zb_buf_get_out_delayed_ext(zigbee_app_tx_power_apply_cb, ch, 0);
 		if (ret != RET_OK) {
+			s_tx_pwr_fail++;
 			printk("zigbee: tx_pwr schedule fail ch=%u ret=%d\n", (unsigned)ch,
 			       (int)ret);
+			/* 跳过该信道，继续试后面的，避免整链卡死 */
+			continue;
 		}
+		return;
 	}
+
+	printk("zigbee: tx_pwr=%d dBm mask=0x%08x done ok=%u fail=%u\n",
+	       CONFIG_ZIGBEE_APP_TX_POWER, (unsigned)mask, (unsigned)s_tx_pwr_ok,
+	       (unsigned)s_tx_pwr_fail);
+}
+
+/** Apply CONFIG_ZIGBEE_APP_TX_POWER to every channel in the scan mask (serialized). */
+static void zigbee_app_tx_power_apply(void)
+{
+	s_tx_pwr_next_ch = ZB_PAGE0_2_4_GHZ_CHANNEL_FROM;
+	s_tx_pwr_ok = 0U;
+	s_tx_pwr_fail = 0U;
+	printk("zigbee: tx_pwr=%d dBm mask=0x%08x start\n", CONFIG_ZIGBEE_APP_TX_POWER,
+	       (unsigned)CONFIG_ZIGBEE_CHANNEL_MASK);
+	zigbee_app_tx_power_schedule_next();
 }
 
 status_t zigbee_app_start(void)
@@ -490,7 +568,10 @@ status_t zigbee_app_start(void)
 
 	ZB_ZCL_REGISTER_DEVICE_CB(zcl_device_cb);
 	ZB_AF_REGISTER_DEVICE_CTX(&app_light_ctx);
+	ZB_AF_SET_ENDPOINT_HANDLER(ZIGBEE_APP_ENDPOINT, zigbee_app_ep_handler);
 	zigbee_app_clusters_attr_init();
+	printk("zigbee: disp_text cluster=0x%04x cmd=0x%02x (tuya string DP target)\n",
+	       (unsigned)ZB_ZCL_CLUSTER_ID_DISP_TEXT, (unsigned)ZB_ZCL_CMD_DISP_TEXT_SET);
 
 	/* 属性初值同步进栈（关） */
 	ZB_ZCL_SET_ATTRIBUTE(ZIGBEE_APP_ENDPOINT, ZB_ZCL_CLUSTER_ID_ON_OFF,

@@ -1,41 +1,54 @@
 /*
- * demo — 最小冒烟脚表（对齐自有板 UART/LED；与 board_io_rev_b 一致）
+ * demo — 临时适配 ink_panel EVT 冒烟（原 TY rev_a：UART P1.04/05 LED P2.08/09）
  *
- * UART20 console: TX=P1.04  RX=P1.05  @ 115200
- * LED0=P2.08  LED1=P2.09  (GPIO_ACTIVE_LOW)
- * FTM 按键：P0.00 ACTIVE_LOW + PULL_UP（BTN_PERMISSION_FTM）
- * LFCLK: 内部 RC；HFCLK: 外部 32 MHz HFXO（CONFIG_START_REQUEST_HFXO）
+ * UART00 console: TX=P2.02  RX=P2.00  @ 115200
+ * LED0=P1.13 ACTIVE_LOW（LED_STATUS_N）；单灯
+ * FTM 按键：P0.00
+ * 时钟：LF=RC；HFXO 关（EVT 晶振未起时 start 会死等无灯）
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
 
 &pinctrl {
-	uart20_default: uart20_default {
+	uart00_default: uart00_default {
 		group1 {
-			psels = <NRF_PSEL(UART_TX, 1, 4)>;
+			psels = <NRF_PSEL(UART_TX, 2, 2)>;
 		};
 		group2 {
-			psels = <NRF_PSEL(UART_RX, 1, 5)>;
+			psels = <NRF_PSEL(UART_RX, 2, 0)>;
 			bias-pull-up;
 		};
 	};
 
-	uart20_sleep: uart20_sleep {
+	uart00_sleep: uart00_sleep {
 		group1 {
-			psels = <NRF_PSEL(UART_TX, 1, 4)>,
-				<NRF_PSEL(UART_RX, 1, 5)>;
+			psels = <NRF_PSEL(UART_TX, 2, 2)>,
+				<NRF_PSEL(UART_RX, 2, 0)>;
 			low-power-enable;
 		};
 	};
 };
 
-&uart20 {
+&uart00 {
 	status = "okay";
 	current-speed = <115200>;
-	pinctrl-0 = <&uart20_default>;
-	pinctrl-1 = <&uart20_sleep>;
+	pinctrl-0 = <&uart00_default>;
+	pinctrl-1 = <&uart00_sleep>;
 	pinctrl-names = "default", "sleep";
+};
+
+&uart20 {
+	status = "disabled";
+};
+
+/* SERIAL00 与 uart00 互斥：关掉 DK SPI NOR */
+&spi00 {
+	status = "disabled";
+};
+
+&mx25r64 {
+	status = "disabled";
 };
 
 /* DK 默认外设关掉，避免占脚 */
@@ -47,18 +60,30 @@
 	status = "disabled";
 };
 
+/* DK button0 与 EVT LED 同脚 P1.13，必须关掉 */
+&button0 {
+	status = "disabled";
+};
+
 &button1 {
 	status = "disabled";
 };
 
+&button2 {
+	status = "disabled";
+};
+
+&button3 {
+	status = "disabled";
+};
+
 &led0 {
-	gpios = <&gpio2 8 GPIO_ACTIVE_LOW>;
-	label = "LED0 P2.08";
+	gpios = <&gpio1 13 GPIO_ACTIVE_LOW>;
+	label = "LED_STATUS P1.13";
 };
 
 &led1 {
-	gpios = <&gpio2 9 GPIO_ACTIVE_LOW>;
-	label = "LED1 P2.09";
+	status = "disabled";
 };
 
 &led2 {
@@ -69,16 +94,16 @@
 	status = "disabled";
 };
 
-/* 外部 32 MHz HFXO；片内负载 15 pF；start_boot 请求并保持 */
+/* EVT 冒烟：不启外部晶振，避免 hfxo_start 死等 */
 &hfxo {
-	status = "okay";
-	load-capacitors = "internal";
-	/* 自制板无外挂电容：与 zigbee_demo 对齐内部 17pF */
-	load-capacitance-femtofarad = <17000>;
+	status = "disabled";
 };
 
-/* FTM 跳槽：P0.00 低有效，内部上拉 */
 &gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
 	status = "okay";
 };
 
@@ -87,6 +112,11 @@
 };
 
 / {
+	chosen {
+		zephyr,console = &uart00;
+		zephyr,shell-uart = &uart00;
+	};
+
 	zephyr,user {
 		btn-ftm-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 	};

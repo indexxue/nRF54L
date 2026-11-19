@@ -123,9 +123,9 @@
 	status = "disabled";
 };
 
-/* 片内 NFCT Tag：P1.02=NFC1 / P1.03=NFC2（FPC2）；关功能靠 CONFIG_INK_PANEL_NFC=n */
+/* 冒烟轮关掉 NFCT；开 NFC 时再 okay */
 &nfct {
-	status = "okay";
+	status = "disabled";
 };
 
 /* DK onboard MX25 SPI NOR — not present on EVT wiring */
@@ -137,22 +137,13 @@
 	status = "disabled";
 };
 
-/* 32 MHz HFXO（X1）：射频必需；内部负载先拉满，按晶振 CL 再微调 */
+/* 临时关外部晶振（排查无灯效）；恢复射频时再 okay + 负载电容 */
 &hfxo {
-	status = "okay";
-	load-capacitors = "internal";
-	load-capacitance-femtofarad = <17000>;
+	status = "disabled";
 };
 
-/* 32.768 kHz LFXO（X2 → P1.00/P1.01）；与 prj.conf K32SRC_XTAL 配对 */
 &lfxo {
-	status = "okay";
-	load-capacitors = "internal";
-	load-capacitance-femtofarad = <17000>;
-};
-
-&timer20 {
-	status = "okay";
+	status = "disabled";
 };
 
 &gpio0 {
@@ -171,7 +162,6 @@
 	chosen {
 		zephyr,console = &uart00;
 		zephyr,shell-uart = &uart00;
-		ncs,zigbee-timer = &timer20;
 	};
 
 	zephyr,user {
@@ -186,6 +176,7 @@
 		epd-cs-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;
 		epd-dc-gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;
 		epd-rst-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
-		epd-busy-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
+		/* 对齐 eink_tag：BUSY 内部上拉；无面板时也应读到高 */
+		epd-busy-gpios = <&gpio1 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
 	};
 };

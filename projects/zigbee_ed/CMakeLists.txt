@@ -23,6 +23,8 @@ set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_SOURCE_DIR}/board/app.overlay)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(zigbee_ed)
 
+set(CBB_EPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/epd)
+
 target_sources(app PRIVATE
   src/app.c
   board/board_config.c
@@ -30,10 +32,27 @@ target_sources(app PRIVATE
   lib/zigbee/zboss_mem_globals.c
 )
 
+if(CONFIG_ZIGBEE_ED_EPD)
+  target_sources(app PRIVATE
+    board/epd_board.c
+    ${CBB_EPD_DIR}/epd.c
+    ${CBB_EPD_DIR}/epd_display.c
+    ${CBB_EPD_DIR}/epd_display_assets.c
+    ${CBB_EPD_DIR}/panels/epd_panel_ws_4in2b_v2.c
+  )
+endif()
+
 # LTO prebuilt ZBOSS: keep mem globals on classic ELF path (Nordic sample pattern).
 set_source_files_properties(lib/zigbee/zboss_mem_globals.c PROPERTIES COMPILE_OPTIONS -fno-lto)
 
 target_include_directories(app PRIVATE
   src
+  board
   lib/zigbee
+  # Explicit for IDE/clangd; also provided via modules/nrf54_common.
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include
 )
+
+if(CONFIG_ZIGBEE_ED_EPD)
+  target_include_directories(app PRIVATE ${CBB_EPD_DIR})
+endif()

@@ -21,6 +21,8 @@
 #include <zb_nrf_platform.h>
 #include <zigbee/zigbee_app_utils.h>
 #include <zigbee/zigbee_error_handler.h>
+#include <zb_diag_key_exposure.h>
+#include <zb_nwk_nib.h>
 
 #include "cmd.h"
 #include "nvs.h"
@@ -62,6 +64,16 @@ static bool s_stack_started;
 static bool s_net_up;
 static bool s_settings_loaded;
 static uint8_t s_pending_req = (uint8_t)ZBFT_MODE_IDLE;
+
+/*
+ * Factory TOOL only: fixed NWK key so Wireshark can decrypt without capturing
+ * Transport Key. Same bytes as Nordic example / Wireshark "Nordic Examples".
+ * UUT still receives it via standard Transport Key during join.
+ */
+static zb_uint8_t s_zbft_nwk_key[16] = {
+	0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
 
 /* M2 allow / joined — RAM only (reboot clears). */
 static zb_ieee_addr_t s_allow_ieee;
@@ -277,6 +289,12 @@ static void zbft_on_device_annce(zb_zdo_signal_device_annce_params_t *p)
 	s_joined_short = p->device_short_addr;
 	s_dut_joined = true;
 	printk("zbft: dut joined ieee=%s nwk=0x%04x\n", ieee_s, (unsigned)p->device_short_addr);
+	/* Wireshark learns current NWK key from this debug broadcast (trace/debug lib). */
+	{
+		zb_ret_t br = zb_diag_broadcast_nwk_key();
+
+		printk("zbft: diag nwk_key broadcast ret=%d\n", (int)br);
+	}
 }
 
 static void zbft_trim_crlf(char *s)
@@ -510,11 +528,45 @@ static void zbft_start_stack(zbft_mode_t mode)
 	}
 
 	zigbee_erase_persistent_storage(ZB_TRUE);
+	/* Prefill before enable (shell-style); re-apply again at FORMATION (ZBOSS ctx). */
+	if (mode == ZBFT_MODE_TOOL) {
+		zb_secur_setup_nwk_key(s_zbft_nwk_key, 0);
+		printk("zbft: nwk_key prefill ab:cd:ef:01:23:45:67:89:00:00:00:00:00:00:00:00\n");
+	}
 	zigbee_enable();
 	s_stack_started = true;
 	s_mode = mode;
 	s_net_up = false;
 	(void)zbft_tx_power_apply();
+}
+
+static void zbft_tool_dump_active_nwk_key(const char *tag)
+{
+	zb_nib_t *nib = zb_nwk_get_nib();
+	zb_uint8_t i = (zb_uint8_t)nib->active_secur_material_i;
+	const zb_uint8_t *k = nib->secur_material_set[i].key;
+
+	printk("zbft: %s active_seq=%u mat=%u key=%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:"
+	       "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n",
+	       tag, (unsigned)nib->active_key_seq_number, (unsigned)i, k[0], k[1], k[2], k[3],
+	       k[4], k[5], k[6], k[7], k[8], k[9], k[10], k[11], k[12], k[13], k[14], k[15]);
+}
+
+static void zbft_tool_apply_fixed_nwk_key(void)
+{
+	zb_nib_t *nib = zb_nwk_get_nib();
+	zb_uint8_t i;
+
+	zb_secur_setup_nwk_key(s_zbft_nwk_key, 0);
+	/* setup_nwk_key alone is not enough on this stack — force every material slot. */
+	for (i = 0U; i < (zb_uint8_t)ZB_SECUR_N_SECUR_MATERIAL; i++) {
+		ZB_MEMCPY(nib->secur_material_set[i].key, s_zbft_nwk_key, sizeof(s_zbft_nwk_key));
+		nib->secur_material_set[i].key_seq_number = 0U;
+		nib->secur_material_set_valid_bitmask |= (zb_uint8_t)(1U << i);
+	}
+	nib->active_key_seq_number = 0U;
+	nib->active_secur_material_i = 0U;
+	zbft_tool_dump_active_nwk_key("nwk_key forced");
 }
 
 void zboss_signal_handler(zb_bufid_t bufid)
@@ -523,7 +575,15 @@ void zboss_signal_handler(zb_bufid_t bufid)
 	zb_zdo_app_signal_type_t sig = zb_get_app_signal(bufid, &sig_hnd);
 	zb_ret_t status = ZB_GET_APP_SIGNAL_STATUS(bufid);
 
+	/* Re-apply before BDB forms — TC may otherwise generate a random NWK key. */
+	if ((s_mode == ZBFT_MODE_TOOL) && (status == RET_OK) &&
+	    ((sig == ZB_BDB_SIGNAL_DEVICE_FIRST_START) || (sig == ZB_BDB_SIGNAL_DEVICE_REBOOT))) {
+		zbft_tool_apply_fixed_nwk_key();
+	}
+
 	if ((sig == ZB_BDB_SIGNAL_FORMATION) && (s_mode == ZBFT_MODE_TOOL) && (status == RET_OK)) {
+		/* Formed: pin well-known key again before any join / Transport Key. */
+		zbft_tool_apply_fixed_nwk_key();
 		/* Formed: do NOT call default (it auto-steers / opens join). */
 		s_net_up = true;
 		printk("zbft: formed ch=%u pan=0x%04x\n", (unsigned)s_channel,

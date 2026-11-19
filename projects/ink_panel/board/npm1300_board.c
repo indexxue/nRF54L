@@ -146,27 +146,36 @@ static int npm1300_board_gpio_init(void)
 	return 0;
 }
 
+/** 触摸 LDO1；墨水屏 LDSW2 必须 3.3V（驱动上限） */
+#define NPM1300_BOARD_TOUCH_MV 3000U
+#define NPM1300_BOARD_EPD_MV   3300U
+
 /**
- * 配 LDO1=3.0V、LDO2=3.3V。
- * TEMP 功能验证：两路常开；低功耗门控 / 同域 3.0V 以后再收。
+ * 配 LDO1=触摸、LDSW2=EPD 3.3V（LDO 模式）。
+ * TEMP：两路常开；并回读 VOUTSEL/LDOSEL，避免 LoadSW 透传成 ~3.0V。
  */
 static int npm1300_board_rails_config(void)
 {
 	npm1300_status_t st;
+	uint8_t ldosel = 0U;
+	uint8_t voutsel = 0U;
+	uint16_t epd_mv;
 
 	st = npm1300_ldsw_set_mode(&g_npm1300, NPM1300_LDSW1, NPM1300_LDSW_MODE_LDO);
 	if (st != NPM1300_OK) {
 		return -1;
 	}
-	st = npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW1, 3000U);
+	st = npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW1, NPM1300_BOARD_TOUCH_MV);
 	if (st != NPM1300_OK) {
 		return -2;
 	}
+
+	/* EPD：先设 LDO 模式再写 3.3V，使能后再写一次防被默认覆盖 */
 	st = npm1300_ldsw_set_mode(&g_npm1300, NPM1300_LDSW2, NPM1300_LDSW_MODE_LDO);
 	if (st != NPM1300_OK) {
 		return -3;
 	}
-	st = npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW2, 3300U);
+	st = npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW2, NPM1300_BOARD_EPD_MV);
 	if (st != NPM1300_OK) {
 		return -4;
 	}
@@ -174,6 +183,22 @@ static int npm1300_board_rails_config(void)
 	s_rails_cfg_ok = true;
 	npm1300_board_touch_power_set(true);
 	npm1300_board_epd_power_set(true);
+
+	(void)npm1300_ldsw_set_mode(&g_npm1300, NPM1300_LDSW2, NPM1300_LDSW_MODE_LDO);
+	(void)npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW2, NPM1300_BOARD_EPD_MV);
+
+	(void)npm1300_reg_read(&g_npm1300, 0x0809u, &ldosel); /* LDSW2LDOSEL */
+	(void)npm1300_reg_read(&g_npm1300, 0x080Du, &voutsel); /* LDSW2VOUTSEL */
+	epd_mv = (uint16_t)(1000U + ((uint16_t)voutsel * 100U));
+	printk("npm1300 EPD rail: LDOSEL=0x%02x VOUTSEL=0x%02x => %umV (want %u)\n",
+	       ldosel, voutsel, (unsigned)epd_mv, (unsigned)NPM1300_BOARD_EPD_MV);
+	if ((ldosel & 0x01u) == 0U) {
+		printk("npm1300 EPD WARN: not LDO mode (LoadSW may pass ~BUCK/VSYS)\n");
+	}
+	if (epd_mv != NPM1300_BOARD_EPD_MV) {
+		printk("npm1300 EPD WARN: vout not 3.3V\n");
+	}
+
 	return 0;
 }
 
@@ -328,7 +353,9 @@ int npm1300_board_bringup(void)
 	npm1300_board_charge_sync();
 	npm1300_board_workers_start();
 
-	printk("npm1300 ok buck1=3.0V touch=3.0V epd=3.3V both=on chg=%s\n",
+	printk("npm1300 ok buck1=3.0V touch=%uV epd=%uV(LDO) both=on chg=%s\n",
+	       (unsigned)(NPM1300_BOARD_TOUCH_MV / 1000U),
+	       (unsigned)(NPM1300_BOARD_EPD_MV / 1000U),
 	       s_charge_applied ? "on" : "off");
 	npm1300_board_log_status();
 	return 0;

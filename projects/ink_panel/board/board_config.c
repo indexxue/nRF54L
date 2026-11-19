@@ -1,6 +1,6 @@
 /**
  * @file board_config.c
- * @brief ink_panel — EVT: UART + LED×1 + BTN×1 (no TOUCH as button)
+ * @brief ink_panel — EVT ?????UART + LED×1 + BTN×1
  */
 
 #include "board.h"
@@ -37,7 +37,7 @@ static const board_button_spec_t s_buttons[] = {
 };
 
 static const board_config_t s_board = {
-	.name = "ink_panel_evt",
+	.name = "ink_panel_evt_smoke",
 	.mask = BOARD_MASK_UART | BOARD_MASK_LED | BOARD_MASK_BUTTON,
 
 	.leds = s_leds,

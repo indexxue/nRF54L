@@ -1,3 +1,4 @@
 # ink_panel lib
 
-`zigbee/`：自 `zigbee_ed` 拷贝的 ED + OnOff 联调栈。产品集群后轮再换。
+本工程产品逻辑在 `src/app.c`；BLE 走仓库共享 [`ble/`](../../../ble/)。  
+原 `lib/zigbee/` 已随无线协议迁移移除。

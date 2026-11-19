@@ -1,15 +1,14 @@
 # ink_panel
 
-EVT 自有板 bring-up。脚手架来自 `zigbee_ed`。
+EVT 自有板 bring-up。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)）。
 
-**当前临时配置（无外部晶振 / 无射频）**：仅 UART + LED 心跳，HF=HFINT，LF=RC。串口通后再开 Zigbee/HFXO。
-
-规格：[`docs/superpowers/specs/2026-11-12-ink-panel-design.md`](../../docs/superpowers/specs/2026-11-12-ink-panel-design.md)
+规格（历史 Zigbee 轮）：[`docs/superpowers/specs/2026-11-12-ink-panel-design.md`](../../docs/superpowers/specs/2026-11-12-ink-panel-design.md)  
+本轮：Zigbee → BLE 档1（可连 + PING；EPD 上传后轮）。
 
 | 层 | 路径 |
 |----|------|
-| 产品（按键/灯效/日志） | `src/app.c` |
-| Zigbee 协议（本工程私有） | `lib/zigbee/` |
+| 产品（按键/灯效/日志/CMD） | `src/app.c` |
+| BLE 协议（仓库共享） | `ble/` via `modules/nrf54_ble` |
 
 ## 板级（EVT 网表）
 
@@ -20,20 +19,29 @@ EVT 自有板 bring-up。脚手架来自 `zigbee_ed`。
 | LED_STATUS | `LED_STATUS_N` | **P1.13** ACTIVE_LOW |
 | BTN1 | `BTN_USER_N` | **P0.00** |
 | BTN2 | — | **未接**（勿占用 `TOUCH_ALERT` P0.01） |
+| BLE 2.4G | — | 片上 RADIO（设备名 `ink_panel`） |
 
-| Zigbee | 值 |
-|--------|-----|
-| 扫描掩码 | `0x02108800`（11/15/20/25） |
-| Basic Model | `ink_panel` |
-| OnOff EP1 | 联调探针，非产品语义 |
-
-## 按键 / LED
+## 按键 / LED / 低功耗
 
 | 操作 | 行为 |
 |------|------|
-| BTN1 短按 | 60s 配网窗 + Network Steering |
+| BTN1 短按 | 打开/刷新 **30s** 可发现广播窗 + PAIRING 灯效 |
 | BTN1 长按 ≈5s | `boot_mode=factory` + 冷复位（须 slot1 已烧 factory） |
-| leave / 擦 NVRAM | 本轮无 BTN2；用调试器擦或后轮补命令 |
+| 广播窗超时且未连接 | 停广播进入浅睡；BTN1（WAKE）再开窗 |
+| 已连接 | SUCCESS 灯效；断连后自动再广播并重新计时 30s |
+
+## BLE 冒烟（nRF Connect）
+
+自定义 128-bit 服务（前 32 bit = FNV-1a(NVS sn)），见 [`ble/README.md`](../../ble/README.md)。
+
+| 步骤 | 期望 |
+|------|------|
+| 扫描连接 `ink_panel`，对 TX **Enable Notify** | 串口 `ble: connected` |
+| RX Write：`E9 03 00 00`（PING 1001） | Notify ACK；串口 `app: PING ok` |
+| 保持连接约 20s | HEARTBEAT Notify；串口 `app: HEARTBEAT` |
+| 显示类 CMD（2001–2004） | ACK `STATUS_NOT_SUPPORTED`（档1 未开 EPD 上传） |
+
+**不要用** nRF Connect 的 SMP / DFU / UART 菜单测业务。
 
 ## 构建 / 烧录
 
@@ -47,10 +55,8 @@ EVT 自有板 bring-up。脚手架来自 `zigbee_ed`。
 .\nrf.cmd -Project ink_panel flash
 ```
 
-依赖与 `zigbee_ed` 相同：`NCS_ZIGBEE_ROOT` → ncs-zigbee v1.4.0。
+期望串口：`ink_panel boot` / `ink_panel ok` / `ble: advertising`（BTN1 或上电窗内）。
 
-期望串口：`ink_panel boot` / `ink_panel ok` / `zigbee: steering`（BTN1 后）。
-
-墨水屏：`prj.conf` 里 `CONFIG_INK_PANEL_EPD=n`（暂关，不编 epd、不 smoke）。要开屏改 `y` 后重编。
+墨水屏：`prj.conf` 里 `CONFIG_INK_PANEL_EPD=n`（暂关）。要开屏改 `y` 后重编（画面上传协议仍后轮）。
 
 NFC（片内 NFCT T2T）：`CONFIG_INK_PANEL_NFC=y`。期望串口 `nfc: bringup ok`；手机靠近见 `nfc: field on` / `data read` / `field off`；读到 Text `ink_panel NFC ok`。关改 `n`。

@@ -3,13 +3,14 @@
  *
  * BLE CMD：
  *   PING(1001)         → ACK，不刷屏
- *   DISPLAY(2001)      → 投递 EPD 线程 demo 全刷（异步；上电不自动跑）
+ *   DISPLAY(2001)      → 投递 EPD 线程 demo 全刷（异步）
  *   DISP_BEGIN(2002)   → 开会话，清平面，记 len/CRC
  *   DISP_CHUNK(2003)   → 按 offset 写平面
  *   DISP_REFRESH(2004) → CRC 校验后投递 host 全刷
  *   HEARTBEAT(8001)    上行约 20s
  *
- * EPD 在独立线程；main 只跑 start_poll / BLE。
+ * EPD 在独立线程；上电 ready 后自动跑一次 4.2" demo 全刷。
+ * main 只跑 start_poll / BLE。
  * 睡眠：停广播；按键(WAKE)唤醒 / 断连后再开快广播窗口；窗口超时才进睡。
  */
 
@@ -47,7 +48,11 @@
 #define APP_EPD_THREAD_PRIO 8
 #define APP_EPD_JOB_DEMO    1U
 #define APP_EPD_JOB_HOST    2U
-#define APP_EPD_ENABLE      0 /* 临时关墨水屏，专注 PN5180；恢复刷屏改回 1 */
+#define APP_EPD_ENABLE      1
+/** 上电 ready 后自动 demo 全刷（刷在 EPD 线程，不堵 main） */
+#define APP_EPD_BOOT_DEMO   1
+/** 上电强制 4.2"；仅当 NVS 不是 4.2 时写一次 Flash */
+#define APP_EPD_FORCE_4IN2  1
 
 typedef enum {
 	APP_DISP_IDLE = 0,
@@ -621,11 +626,21 @@ static void app_epd_worker(void *p1, void *p2, void *p3)
 		return;
 	}
 
-	/* 涓婄數涓嶈窇 demo锛汥ISPLAY(2001) / Host BEGIN鈫扲EFRESH 鍐嶅埛 */
 	atomic_set(&s_epd_ready, 1);
-	LOG_INFO("epd: ready board=%ux%u plane=%u 鈥?DISPLAY=demo | BEGIN/CHUNK/REFRESH",
+	LOG_INFO("epd: ready board=%ux%u plane=%u panel=%s — DISPLAY=demo | BEGIN/CHUNK/REFRESH",
 		 (unsigned)epd_board_width(), (unsigned)epd_board_height(),
-		 (unsigned)epd_board_plane_size());
+		 (unsigned)epd_board_plane_size(), epd_board_panel_name());
+
+#if APP_EPD_BOOT_DEMO
+	/* 上电 demo：在本线程直接刷，不经队列（避免与后续 DISPLAY 抢锁时序） */
+	LOG_INFO("epd: boot demo start");
+	st = epd_board_test_run();
+	if (st != STATUS_OK) {
+		LOG_ERROR("epd: boot demo failed: %d", (int)st);
+	} else {
+		LOG_INFO("epd: boot demo done");
+	}
+#endif
 
 	for (;;) {
 		if (k_msgq_get(&s_epd_jobs, &job, K_FOREVER) != 0) {
@@ -687,8 +702,19 @@ status_t app_init(void)
 	LOG_INFO("app: NVS epanel=%u (%s) -- dbl=4.2in long10s=2.9in", (unsigned)panel,
 		 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
 
+#if APP_EPD_ENABLE && APP_EPD_FORCE_4IN2
+	if (panel != NVS_EPD_PANEL_4IN2) {
+		if (!nvs_epd_panel_set(NVS_EPD_PANEL_4IN2)) {
+			LOG_ERROR("app: force 4.2in NVS write failed");
+		} else {
+			LOG_INFO("app: force epanel -> 4.2in (NVS updated)");
+			panel = NVS_EPD_PANEL_4IN2;
+		}
+	}
+#endif
+
 	ble_evt_set_callback(app_ble_evt_cb, NULL);
-	/* 鏂繛鍚庤嚜鍔ㄥ啀骞挎挱锛岀敱 ADV_WINDOW 瓒呮椂鍚庡啀鍋滃箍杩涚潯 */
+	/* 断连后自动再广播，由 ADV_WINDOW 超时后再停广播进睡 */
 	ble_adv_set_restart_on_disconnect(true);
 	app_adv_window_arm();
 

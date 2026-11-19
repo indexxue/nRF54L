@@ -35,4 +35,6 @@ target_include_directories(app PRIVATE
   src
   lib/cmd
   lib/zigbee
+  # Factory sniffing: poke ZBOSS NIB for fixed/dump NWK key (zb_nwk_nib.h).
+  $ENV{NCS_ZIGBEE_ROOT}/lib/zboss/src/include
 )

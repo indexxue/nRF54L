@@ -298,3 +298,4 @@ ZigBridge：
 | 2026-11-10 | **T0 关闭**：PID/DP/firmware key 齐；mfr/model 联调占位 `TY`/`zigbee_ed` |
 | 2026-11-10 | **T1 软件完成**：Basic EXT + Kconfig；build 通过；待板测 |
 | 2026-11-10 | **T2 软件完成**：OnOff report setup + set_value；build 通过；待板测 |
+| 2026-11-16 | 真网关 **LQ-WG03**；复用 PID；`CHANNEL_MASK=0x07FFF800`（11–26）；双灯验收：蓝配网 / 绿控灯 |
