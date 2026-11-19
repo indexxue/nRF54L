@@ -1,6 +1,6 @@
 /**
  * @file nvs.c
- * @brief Zephyr Settings 后端的应用层 NVS（N2 键集）
+ * @brief Settings 业务壳（非自研 NVS）：ty_app 键 + RAM 缓存 + boot_share
  */
 
 #include "nvs.h"
@@ -16,9 +16,9 @@
 
 #include <pm_config.h>
 
+#include <zephyr/sys/crc.h>
+
 #include "boot_share.h"
-#include "crc32.h"
-#include "device_profile.h"
 #include "fw_version.h"
 #include "log.h"
 
@@ -480,14 +480,9 @@ bool nvs_app_version_get(char *version)
 	if (version == NULL) {
 		return false;
 	}
-	strncpy(version, version_get_string(), NVS_APP_VERSION_SIZE - 1U);
+	strncpy(version, fw_version_get_string(), NVS_APP_VERSION_SIZE - 1U);
 	version[NVS_APP_VERSION_SIZE - 1U] = '\0';
 	return true;
-}
-
-bool nvs_factory_version_get(char *version)
-{
-	return nvs_app_version_get(version);
 }
 
 void nvs_device_type_set(uint8_t type)
@@ -566,14 +561,9 @@ const char *nvs_device_id_project_name(uint32_t id)
 	return "unknown";
 }
 
-uint32_t nvs_firmware_build_date(void)
-{
-	return NVS_FIRMWARE_BUILD_DATE;
-}
-
 uint32_t nvs_build_date_get(void)
 {
-	return nvs_firmware_build_date();
+	return NVS_FIRMWARE_BUILD_DATE;
 }
 
 bool nvs_build_date_format(uint32_t ymd, char *out, size_t out_cap)
@@ -600,8 +590,8 @@ static bool nvs_boot_share_persist(uint8_t mode)
 	rec.magic = BOOT_SHARE_MAGIC;
 	rec.version = BOOT_SHARE_VERSION;
 	rec.boot_mode = mode;
-	rec.crc32 = crc32_compute((const uint8_t *)&rec,
-				  offsetof(struct boot_share_record, crc32));
+	rec.crc32 = crc32_ieee((const uint8_t *)&rec,
+			       offsetof(struct boot_share_record, crc32));
 
 	rc = flash_area_open(PM_BOOT_SHARE_ID, &fa);
 	if (rc != 0) {

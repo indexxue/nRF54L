@@ -14,7 +14,7 @@
         }                                                                                      \
     } while (0)
 
-#define BTN_IS_PRESSED(i) (g_btn_status_reg & (1U << (i)))
+#define BTN_IS_PRESSED(i) (s_btn_status_reg & (1U << (i)))
 
 typedef enum
 {
@@ -27,8 +27,8 @@ typedef uint32_t btn_type_t;
 
 static flex_button_t *btn_head = NULL;
 
-btn_type_t g_logic_level = (btn_type_t)0;
-btn_type_t g_btn_status_reg = (btn_type_t)0;
+static btn_type_t s_logic_level = (btn_type_t)0;
+static btn_type_t s_btn_status_reg = (btn_type_t)0;
 
 static uint8_t button_cnt = 0;
 
@@ -62,7 +62,7 @@ status_t flex_button_register(flex_button_t *button)
     }
     btn_head = button;
 
-    g_logic_level |= ((btn_type_t)button->pressed_logic_level << button_cnt);
+    s_logic_level |= ((btn_type_t)button->pressed_logic_level << button_cnt);
     button_cnt++;
 
     return STATUS_OK;
@@ -80,7 +80,7 @@ static void flex_button_read(void)
         raw_data |= ((btn_type_t)(target->usr_button_read)(target) << i);
     }
 
-    g_btn_status_reg = (~raw_data) ^ g_logic_level;
+    s_btn_status_reg = (~raw_data) ^ s_logic_level;
 }
 
 static uint8_t flex_button_process(void)

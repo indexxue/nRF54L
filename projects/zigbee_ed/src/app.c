@@ -14,10 +14,10 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
+#include "app_event.h"
 #include "board.h"
 #include "button.h"
 #include "device_profile.h"
-#include "event.h"
 #include "led_scene.h"
 #include "log.h"
 #include "nvs.h"
@@ -138,12 +138,11 @@ static void app_handle_button(void)
 	btn_id_e id;
 	btn_event_e ev;
 
-	if (!event_is_set(EVT_ID_BUTTON)) {
+	if (!app_event_take(APP_EVT_BUTTON)) {
 		return;
 	}
 
 	button_last_event_get(&id, &ev);
-	event_clear(EVT_ID_BUTTON);
 	button_last_event_clear();
 
 	if ((id == BTN_ID_CONFIRM) && (ev == BTN_EVENT_SINGLE_CLICK)) {

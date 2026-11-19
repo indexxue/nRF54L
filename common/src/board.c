@@ -5,8 +5,6 @@
 
 #include "board.h"
 
-#include "led_scene.h"
-
 bool board_wants(uint32_t mask)
 {
 	const board_config_t *cfg = board_config_get();
@@ -156,29 +154,6 @@ const board_adc_spec_t *board_adc_spec(uint8_t index)
 	return &cfg->adcs[index];
 }
 
-uint8_t board_input_count(void)
-{
-	const board_config_t *cfg = board_config_get();
-
-	if ((cfg == NULL) || !board_wants(BOARD_MASK_INPUT))
-	{
-		return 0U;
-	}
-	return cfg->input_count;
-}
-
-const board_input_spec_t *board_input_spec(uint8_t index)
-{
-	const board_config_t *cfg = board_config_get();
-
-	if ((cfg == NULL) || !board_wants(BOARD_MASK_INPUT) || (cfg->inputs == NULL) ||
-	    (index >= cfg->input_count))
-	{
-		return NULL;
-	}
-	return &cfg->inputs[index];
-}
-
 uint8_t board_pwm_count(void)
 {
 	const board_config_t *cfg = board_config_get();
@@ -225,45 +200,13 @@ const board_button_spec_t *board_button_spec(uint8_t index)
 	return &cfg->buttons[index];
 }
 
-uint8_t board_irq_count(void)
-{
-	const board_config_t *cfg = board_config_get();
-
-	if ((cfg == NULL) || !board_wants(BOARD_MASK_IRQ))
-	{
-		return 0U;
-	}
-	return cfg->irq_count;
-}
-
-const board_irq_spec_t *board_irq_spec(uint8_t index)
-{
-	const board_config_t *cfg = board_config_get();
-
-	if ((cfg == NULL) || !board_wants(BOARD_MASK_IRQ) || (cfg->irqs == NULL) ||
-	    (index >= cfg->irq_count))
-	{
-		return NULL;
-	}
-	return &cfg->irqs[index];
-}
-
 status_t board_init(void)
 {
-	const board_config_t *cfg = board_config_get();
-
-	if (cfg == NULL)
+	if (board_config_get() == NULL)
 	{
 		return STATUS_INVALID_STATE;
 	}
 
-	if (board_wants(BOARD_MASK_LED))
-	{
-		if (led_scene_init() != STATUS_OK)
-		{
-			return STATUS_FAIL;
-		}
-	}
-
+	/* LED 场景由 start_boot 在 BOARD_MASK_LED 时 led_scene_init()，不绑在 board。 */
 	return STATUS_OK;
 }

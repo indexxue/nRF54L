@@ -87,14 +87,19 @@ void button_long_press_ms_set_id(btn_id_e id, uint32_t ms);
 void button_schedule(void);
 
 /**
- * FTM 跳槽：带 BTN_PERMISSION_FTM 的键，连击 5→4→3→2 后切换 boot_mode 并冷复位。
- * factory→app（不擦 slot1），其它→factory。错步或步间超时从 5 重来。
+ * FTM 连击识别：带 BTN_PERMISSION_FTM 的键，连击 5→4→3→2 完成后调用
+ * `button_ftm_done_cb_set()` 注册的回调（写 boot_mode / 复位由 start 负责）。
  * 非 FTM 键不消费事件。由 start_poll() 调用。
  */
 void button_ftm_seq_poll(void);
 
+/** FTM 序列完成回调；传 NULL 则只打日志不跳槽。须在 button_init 后、进睡前设置。 */
+typedef void (*button_ftm_done_cb_t)(void);
+void button_ftm_done_cb_set(button_ftm_done_cb_t cb);
+
 /**
- * 仅为带 BTN_PERMISSION_WAKE 的键开边沿 IRQ；ISR 只 event_set_from_isr(EVT_ID_BUTTON)。
+ * 仅为带 BTN_PERMISSION_WAKE 的键开边沿 IRQ；ISR 只 k_event_post(APP_EVT_BUTTON)。
+ * enable 时清 last_* / FTM 进度，避免浅睡前残留触发误跳槽。
  * 浅睡前 enable，醒来后 disable（与 button_schedule 互斥使用）。
  */
 void button_wake_enable(void);

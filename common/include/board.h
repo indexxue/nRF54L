@@ -6,7 +6,6 @@
  * - uart_count / i2c_count / pwm_count / button_count / … → 对应数组长度
  * - spi_bus_count → SPI **控制器/总线** 个数
  * - spi_slave_count → 总线上的 **从机** 个数（每条含 bus 下标 + CS；如墨水屏）
- * - irq_count → 板级 GPIO 中断线个数（片外模组 INT 等）
  *
  * SoC 射频类（BLE / NFC NFCT）仅用 mask，无从机表。
  * 片外器件（EPD 等）在工程 `source/`，挂 SPI/I2C；**勿把片上 NFC 建成 SPI 从机**。
@@ -37,17 +36,14 @@ extern "C" {
 #define BOARD_MASK_I2C    (1U << 2)
 #define BOARD_MASK_SPI    (1U << 3)
 #define BOARD_MASK_ADC    (1U << 4)
-#define BOARD_MASK_INPUT  (1U << 5)
-#define BOARD_MASK_PWM    (1U << 6)
-#define BOARD_MASK_BUTTON (1U << 7)
-#define BOARD_MASK_BLE    (1U << 8)  /**< 片上 2.4G / BLE RADIO */
-#define BOARD_MASK_IRQ    (1U << 9)  /**< 板级 GPIO 中断表（片外 INT） */
-#define BOARD_MASK_NFC    (1U << 10) /**< 片上 NFCT（Tag），非 SPI 外挂 */
+#define BOARD_MASK_PWM    (1U << 5)
+#define BOARD_MASK_BUTTON (1U << 6)
+#define BOARD_MASK_BLE    (1U << 7)  /**< 片上 2.4G / BLE RADIO */
+#define BOARD_MASK_NFC    (1U << 8)  /**< 片上 NFCT（Tag），非 SPI 外挂 */
 
 #define BOARD_MASK_FULL                                                                                    \
 	(BOARD_MASK_LED | BOARD_MASK_UART | BOARD_MASK_I2C | BOARD_MASK_SPI | BOARD_MASK_ADC |             \
-	 BOARD_MASK_INPUT | BOARD_MASK_PWM | BOARD_MASK_BUTTON | BOARD_MASK_BLE | BOARD_MASK_IRQ |         \
-	 BOARD_MASK_NFC)
+	 BOARD_MASK_PWM | BOARD_MASK_BUTTON | BOARD_MASK_BLE | BOARD_MASK_NFC)
 
 /* -------------------------------------------------------------------------- */
 /* 规格表                                                                      */
@@ -103,14 +99,6 @@ typedef struct
 
 typedef struct
 {
-	const struct gpio_dt_spec *gpio;
-	uint8_t id;
-	uint8_t active_level;
-	const char *name;
-} board_input_spec_t;
-
-typedef struct
-{
 	const struct device *dev;
 	uint32_t period_us;
 	const char *name;
@@ -124,15 +112,6 @@ typedef struct
 	uint16_t permission;  /**< 权限位，见 btn_permission_e */
 	const char *name;
 } board_button_spec_t;
-
-/** 板级中断输入（如 NFC IRQ、传感器 INT） */
-typedef struct
-{
-	const struct gpio_dt_spec *gpio;
-	uint8_t id;
-	uint8_t active_level; /**< 1=高有效，0=低有效 */
-	const char *name;
-} board_irq_spec_t;
 
 typedef struct
 {
@@ -157,17 +136,11 @@ typedef struct
 	const board_adc_spec_t *adcs;
 	uint8_t adc_count;
 
-	const board_input_spec_t *inputs;
-	uint8_t input_count;
-
 	const board_pwm_spec_t *pwms;
 	uint8_t pwm_count;
 
 	const board_button_spec_t *buttons;
 	uint8_t button_count;
-
-	const board_irq_spec_t *irqs;
-	uint8_t irq_count;
 } board_config_t;
 
 const board_config_t *board_config_get(void);
@@ -192,17 +165,11 @@ const board_spi_slave_spec_t *board_spi_slave_spec(uint8_t index);
 uint8_t board_adc_count(void);
 const board_adc_spec_t *board_adc_spec(uint8_t index);
 
-uint8_t board_input_count(void);
-const board_input_spec_t *board_input_spec(uint8_t index);
-
 uint8_t board_pwm_count(void);
 const board_pwm_spec_t *board_pwm_spec(uint8_t index);
 
 uint8_t board_button_count(void);
 const board_button_spec_t *board_button_spec(uint8_t index);
-
-uint8_t board_irq_count(void);
-const board_irq_spec_t *board_irq_spec(uint8_t index);
 
 status_t board_init(void);
 

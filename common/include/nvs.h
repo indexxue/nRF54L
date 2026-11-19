@@ -1,6 +1,6 @@
 /**
  * @file nvs.h
- * @brief 应用层非易失参数 API（Zephyr Settings → storage 分区）
+ * @brief Settings 业务壳 API（非自研 NVS；后端 CONFIG_SETTINGS_NVS）
  *
  * N2 最小常用集：did / hid / mac / sn / dtype / boot_mode + 版本只读。
  * 键落在命名空间 NVS_APP_NAMESPACE（Settings 路径 ty_app/<key>）。
@@ -29,12 +29,18 @@ extern "C" {
 #define NVS_PROJECT_ID_CAT_PROJECT 0x53530100U
 #define NVS_PROJECT_ID_MAKE(index) (NVS_PROJECT_ID_CAT_PROJECT | ((uint32_t)(index) & 0xFFU))
 
-#define NVS_PROJECT_ID_DEMO     NVS_PROJECT_ID_MAKE(0x10U)
-#define NVS_PROJECT_ID_EINK_TAG NVS_PROJECT_ID_MAKE(0x20U)
+#define NVS_PROJECT_ID_DEMO          NVS_PROJECT_ID_MAKE(0x10U)
+#define NVS_PROJECT_ID_EINK_TAG      NVS_PROJECT_ID_MAKE(0x20U)
+#define NVS_PROJECT_ID_INK_PANEL     NVS_PROJECT_ID_MAKE(0x30U)
+#define NVS_PROJECT_ID_ZIGBEE_ED     NVS_PROJECT_ID_MAKE(0x40U)
+#define NVS_PROJECT_ID_ZIGBEE_ROUTER NVS_PROJECT_ID_MAKE(0x50U)
 
-#define NVS_PROJECT_ID_TABLE(X)                         \
-	X(DEMO, NVS_PROJECT_ID_DEMO, "demo")            \
-	X(EINK_TAG, NVS_PROJECT_ID_EINK_TAG, "eink_tag")
+#define NVS_PROJECT_ID_TABLE(X)                                                    \
+	X(DEMO, NVS_PROJECT_ID_DEMO, "demo")                                       \
+	X(EINK_TAG, NVS_PROJECT_ID_EINK_TAG, "eink_tag")                           \
+	X(INK_PANEL, NVS_PROJECT_ID_INK_PANEL, "ink_panel")                        \
+	X(ZIGBEE_ED, NVS_PROJECT_ID_ZIGBEE_ED, "zigbee_ed")                        \
+	X(ZIGBEE_ROUTER, NVS_PROJECT_ID_ZIGBEE_ROUTER, "zigbee_router")
 
 #define NVS_DEVICE_ID_IS_PROJECT(id) (((uint32_t)(id) & 0xFFFFFF00U) == NVS_PROJECT_ID_CAT_PROJECT)
 
@@ -113,7 +119,6 @@ bool nvs_sn_set(const char *sn);
 bool nvs_sn_get(char *sn);
 bool nvs_hw_version_get(char *version);
 bool nvs_app_version_get(char *version);
-bool nvs_factory_version_get(char *version);
 void nvs_device_type_set(uint8_t type);
 uint8_t nvs_device_type_get(void);
 
@@ -135,7 +140,6 @@ uint32_t nvs_product_id_active(void);
 const char *nvs_device_id_project_name(uint32_t id);
 #define nvs_product_id_name nvs_device_id_project_name
 
-uint32_t nvs_firmware_build_date(void);
 uint32_t nvs_build_date_get(void);
 bool nvs_build_date_format(uint32_t ymd, char *out, size_t out_cap);
 

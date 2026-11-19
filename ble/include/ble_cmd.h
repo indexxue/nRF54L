@@ -1,6 +1,6 @@
 /**
  * @file ble_cmd.h
- * @brief 标定 CMD：cmd_id + payload；ingress → CMD 线程 → EVT_ID_BLE_CMD。
+ * @brief 标定 CMD：cmd_id + payload；ingress → CMD 线程 → APP_EVT_BLE_CMD。
  *
  * 包格式（小端）：uint16_t cmd_id | uint16_t payload_len | payload[]
  *

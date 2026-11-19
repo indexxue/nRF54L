@@ -42,6 +42,16 @@ static void factory_hw_init_demo(void)
 	/* stub */
 }
 
+static void factory_hw_init_ink_panel(void)
+{
+	/* stub */
+}
+
+static void factory_hw_init_zigbee(void)
+{
+	/* stub */
+}
+
 static void factory_hw_init_default(void)
 {
 	/* stub */
@@ -55,6 +65,11 @@ static void factory_hw_init(void)
 		factory_hw_init_eink_tag();
 	} else if (did == NVS_PROJECT_ID_DEMO) {
 		factory_hw_init_demo();
+	} else if (did == NVS_PROJECT_ID_INK_PANEL) {
+		factory_hw_init_ink_panel();
+	} else if ((did == NVS_PROJECT_ID_ZIGBEE_ED) ||
+		   (did == NVS_PROJECT_ID_ZIGBEE_ROUTER)) {
+		factory_hw_init_zigbee();
 	} else {
 		factory_hw_init_default();
 	}

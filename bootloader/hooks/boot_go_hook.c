@@ -20,8 +20,9 @@
 #include "bootutil/fault_injection_hardening.h"
 #include "bootutil/image.h"
 
+#include <zephyr/sys/crc.h>
+
 #include "boot_share.h"
-#include "crc32.h"
 
 BOOT_LOG_MODULE_DECLARE(mcuboot);
 
@@ -58,8 +59,8 @@ static bool boot_share_read_factory(void)
 		return false;
 	}
 
-	expect_crc = crc32_compute((const uint8_t *)&rec,
-				   offsetof(struct boot_share_record, crc32));
+	expect_crc = crc32_ieee((const uint8_t *)&rec,
+				offsetof(struct boot_share_record, crc32));
 	if (expect_crc != rec.crc32) {
 		BOOT_LOG_WRN("boot_share CRC mismatch");
 		return false;

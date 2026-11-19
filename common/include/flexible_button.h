@@ -1,5 +1,5 @@
-#ifndef FLEXIBLE_BUTTON_H
-#define FLEXIBLE_BUTTON_H
+#ifndef COMMON_FLEXIBLE_BUTTON_H
+#define COMMON_FLEXIBLE_BUTTON_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -70,4 +70,4 @@ uint8_t flex_button_scan(void);
 }
 #endif
 
-#endif /* FLEXIBLE_BUTTON_H */
+#endif /* COMMON_FLEXIBLE_BUTTON_H */

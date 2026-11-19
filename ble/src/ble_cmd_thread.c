@@ -9,7 +9,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 
-#include "event.h"
+#include "app_event.h"
 #include "log.h"
 
 #define BLE_CMD_THREAD_STACK 2048
@@ -48,7 +48,7 @@ static void ble_cmd_thread_fn(void *p1, void *p2, void *p3)
 			continue;
 		}
 
-		event_set(EVT_ID_BLE_CMD);
+		k_event_post(&app_events, APP_EVT_BLE_CMD);
 	}
 }
 

@@ -537,7 +537,7 @@ static void cmd_version(int argc, const char *argv[])
 {
 	(void)argc;
 	(void)argv;
-	cmd_reply_ok("version", version_get_string());
+	cmd_reply_ok("version", fw_version_get_string());
 }
 
 static void cmd_sn(int argc, const char *argv[])

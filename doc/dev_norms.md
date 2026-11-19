@@ -42,11 +42,15 @@
 | `ble_cmd` 线程 | 解析 raw → parsed | 产品决策、EPD |
 | `app_*`（main 环） | 产品逻辑、ACK、入 EPD 队 | 秒级刷屏堵死 poll |
 | EPD / 慢外设线程 | 长耗时 I/O | 在回调里直接调用 |
-| `start/` | 平台起机、`start_poll` | 塞产品协议 |
-| `common/nvs` | Settings 键值 API | 业务里散落 `settings_save` |
+| `start/` | 平台起机、`start_poll`、`K_EVENT_DEFINE(app_events)` | 塞产品协议 |
+| `common/nvs` | Settings 键值 API（业务壳，非自研 NVS） | 业务里散落 `settings_save` |
+| 唤醒同步 | Zephyr `k_event`（`app_event.h`） | 自研 event/sem 包装 |
+| CRC | `zephyr/sys/crc.h` `crc32_ieee` | 自研 crc32 表 |
 
 生命周期固定：`start_boot` → `app_init` → `app_run`。  
-不为「更 Zephyr」重写 `log` / `start`；不整目录拷官方 sample 进工程。
+Phase 1A 已迁：`k_event` / `crc32_ieee`；已删自研 `event` / `crc32` / `input`。  
+**暂不**为「更 Zephyr」重写 `log` / `button` / `flexible_button` / `led_scene`；不整目录拷官方 sample。  
+后续 Phase 可再议 log / gpio-keys，须单独过门禁。
 
 ---
 

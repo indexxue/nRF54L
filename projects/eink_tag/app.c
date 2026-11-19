@@ -23,17 +23,18 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
 
+#include "app_event.h"
 #include "ble.h"
 #include "ble_cmd.h"
 #include "ble_evt.h"
 #include "button.h"
-#include "crc32.h"
 #include "epd_board.h"
-#include "event.h"
 #include "led_scene.h"
 #include "log.h"
 #include "nvs.h"
 #include "pn5180_board.h"
+
+#include <zephyr/sys/crc.h>
 
 #define APP_HB_FLAG_ADV  (1U << 0)
 #define APP_HB_FLAG_CONN (1U << 1)
@@ -103,7 +104,7 @@ static void app_sleep_enter(void)
 {
 	status_t st;
 
-	event_wait_reset();
+	k_event_clear(&app_events, APP_EVT_ANY);
 	app_led_all_off();
 
 	st = ble_adv_stop();
@@ -191,11 +192,11 @@ static void app_ble_evt_cb(const ble_evt_t *evt, void *user)
 	}
 
 	if (evt->id == BLE_EVT_CONNECTED) {
-		event_set(EVT_ID_BLE_GAP);
+		k_event_post(&app_events, APP_EVT_BLE_GAP);
 	} else if (evt->id == BLE_EVT_DISCONNECTED) {
 		/* Restart adv after disconnect; ADV_WINDOW then sleep */
 		app_adv_window_arm();
-		event_set(EVT_ID_BLE_GAP);
+		k_event_post(&app_events, APP_EVT_BLE_GAP);
 	}
 }
 
@@ -248,13 +249,12 @@ static void app_handle_button(void)
 	btn_event_e ev;
 	status_t st;
 
-	if (!event_is_set(EVT_ID_BUTTON)) {
+	if (!app_event_take(APP_EVT_BUTTON)) {
 		return;
 	}
 
 	app_adv_window_arm();
 	button_last_event_get(&id, &ev);
-	event_clear(EVT_ID_BUTTON);
 	button_last_event_clear();
 
 	/* BTN2=BACK 鍗曞嚮锛歅N5180 鎵崱寮€/鍏?*/
@@ -458,7 +458,7 @@ static status_t app_disp_verify_crc(void)
 		if (data == NULL) {
 			return STATUS_INVALID_STATE;
 		}
-		got = crc32_compute(data, s_disp.bw_len);
+		got = crc32_ieee(data, s_disp.bw_len);
 		if (got != s_disp.bw_crc) {
 			LOG_WARN("app: BW CRC fail got=0x%08x expect=0x%08x", got, s_disp.bw_crc);
 			return STATUS_FAIL;
@@ -470,7 +470,7 @@ static status_t app_disp_verify_crc(void)
 		if (data == NULL) {
 			return STATUS_INVALID_STATE;
 		}
-		got = crc32_compute(data, s_disp.red_len);
+		got = crc32_ieee(data, s_disp.red_len);
 		if (got != s_disp.red_crc) {
 			LOG_WARN("app: RED CRC fail got=0x%08x expect=0x%08x", got, s_disp.red_crc);
 			return STATUS_FAIL;
@@ -774,12 +774,18 @@ void app_run(void)
 
 		app_handle_button();
 
-		if (event_is_set(EVT_ID_BLE_GAP)) {
-			/* connect/disconnect 宸插湪鍥炶皟閲屾敼绐楀彛锛涙澶勪粎娓呬綅 */
-		}
+		{
+			uint32_t ev = k_event_wait(&app_events, APP_EVT_BLE_GAP | APP_EVT_BLE_CMD,
+						   false, K_NO_WAIT);
 
-		if (event_is_set(EVT_ID_BLE_CMD)) {
-			app_handle_ble_cmds();
+			if ((ev & APP_EVT_BLE_GAP) != 0U) {
+				k_event_clear(&app_events, APP_EVT_BLE_GAP);
+				/* connect/disconnect already adjusted window in callback */
+			}
+			if ((ev & APP_EVT_BLE_CMD) != 0U) {
+				k_event_clear(&app_events, APP_EVT_BLE_CMD);
+				app_handle_ble_cmds();
+			}
 		}
 
 		if ((tick % APP_HB_PERIOD_TICKS) == 0U) {
@@ -795,7 +801,7 @@ void app_run(void)
 
 		if (app_sleep_can_enter()) {
 			app_sleep_enter();
-			(void)event_wait(-1);
+			(void)k_event_wait(&app_events, APP_EVT_ANY, false, K_FOREVER);
 			app_sleep_exit();
 			continue;
 		}

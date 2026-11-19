@@ -45,8 +45,9 @@ typedef enum
     LED_SCENE_ID_ERROR,
     LED_SCENE_ID_SUCCESS,
     LED_SCENE_ID_FACTORY_RUN,
-    LED_SCENE_ID_EPD_2IN9, /**< 绿灯常亮：当前 2.9" 驱动 */
-    LED_SCENE_ID_EPD_4IN2, /**< 蓝灯常亮：当前 4.2" 驱动 */
+    /** 面板态 A/B（eink_tag 等：绿=2.9" / 蓝=4.2"；通用状态灯，非驱动实现） */
+    LED_SCENE_ID_EPD_2IN9,
+    LED_SCENE_ID_EPD_4IN2,
     LED_SCENE_ID_MAX_NUM,
 } led_scene_id_e;
 

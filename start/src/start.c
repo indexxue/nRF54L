@@ -11,15 +11,35 @@
 #include <zephyr/sys/onoff.h>
 #endif
 
+#include "app_event.h"
 #include "board.h"
 #include "button.h"
 #include "device_profile.h"
-#include "event.h"
 #include "fw_version.h"
-#include "input.h"
 #include "led_scene.h"
 #include "log.h"
 #include "nvs.h"
+
+#include <zephyr/sys/reboot.h>
+
+K_EVENT_DEFINE(app_events);
+
+/** FTM 连击完成后：切换 boot_mode 并冷复位（不在 common/button 写 Flash）。 */
+static void start_ftm_boot_jump(void)
+{
+	uint8_t cur = nvs_boot_mode_get();
+	uint8_t next = (cur == NVS_BOOT_MODE_FACTORY) ? NVS_BOOT_MODE_APP
+						     : NVS_BOOT_MODE_FACTORY;
+
+	if (!nvs_boot_mode_set(next)) {
+		LOG_ERROR("ftm jump: nvs_boot_mode_set(%u) failed", (unsigned)next);
+		return;
+	}
+	LOG_INFO("ftm jump: boot_mode %u → %u reboot (slot1 kept)", (unsigned)cur,
+		 (unsigned)next);
+	k_msleep(50);
+	sys_reboot(SYS_REBOOT_COLD);
+}
 
 #if defined(CONFIG_START_REQUEST_HFXO) && CONFIG_START_REQUEST_HFXO
 /* Keep HFXO onoff request alive so HF does not drop back to HFINT. */
@@ -67,7 +87,6 @@ status_t start_boot(void)
 	}
 	(void)log_set_level(LOG_LEVEL_INFO);
 
-	event_init();
 	nvs_init();
 	/* nvs_init 末尾已 nvs_log_boot_dump() */
 
@@ -83,26 +102,23 @@ status_t start_boot(void)
 #endif
 
 	board = board_config_get();
-	LOG_INFO("start ver=%s product=%s board=%s", version_get_string(),
+	LOG_INFO("start ver=%s product=%s board=%s", fw_version_get_string(),
 		 device_profile_product()->name, board->name);
 
 	if (board_wants(BOARD_MASK_LED)) {
-		led_scene_run(LED_SCENE_ID_BOOTUP);
+		if (led_scene_init() != STATUS_OK) {
+			LOG_WARN("led_scene_init failed");
+		} else {
+			led_scene_run(LED_SCENE_ID_BOOTUP);
+		}
 	}
 
 	if (board_wants(BOARD_MASK_BUTTON)) {
 		st = button_init(button_log_notify);
 		if ((st != STATUS_OK) && (st != STATUS_NOT_SUPPORTED)) {
 			LOG_WARN("button_init failed: %d", (int)st);
-		}
-	}
-
-	if (board_wants(BOARD_MASK_INPUT) || board_wants(BOARD_MASK_IRQ)) {
-		st = input_init(input_log_notify);
-		if (st == STATUS_OK) {
-			LOG_INFO("input ready");
-		} else if (st != STATUS_NOT_SUPPORTED) {
-			LOG_WARN("input_init failed: %d", (int)st);
+		} else if (st == STATUS_OK) {
+			button_ftm_done_cb_set(start_ftm_boot_jump);
 		}
 	}
 
@@ -114,5 +130,4 @@ void start_poll(void)
 	led_scene_update();
 	button_schedule();
 	button_ftm_seq_poll();
-	input_schedule();
 }

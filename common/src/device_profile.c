@@ -1,37 +1,21 @@
 /**
  * @file device_profile.c
- * @brief demo / factory 空档案；正式产品在此表追加行。
+ * @brief product_id → SKU 名；与 nvs.h NVS_PROJECT_ID_* / 各工程 prj.conf 对齐。
  */
 
 #include "device_profile.h"
 
+#include <stddef.h>
+
 #include <zephyr/sys/util.h>
 
 static const device_product_profile_t s_product_profiles[] = {
-	{
-		.product_id = NVS_DEVICE_ID_DEFAULT,
-		.name = "factory",
-		.board_mask = 0U,
-		.platform_mask = 0U,
-		.buttons = NULL,
-		.button_count = 0U,
-	},
-	{
-		.product_id = NVS_PROJECT_ID_DEMO,
-		.name = "demo",
-		.board_mask = 0U,
-		.platform_mask = 0U,
-		.buttons = NULL,
-		.button_count = 0U,
-	},
-	{
-		.product_id = NVS_PROJECT_ID_EINK_TAG,
-		.name = "eink_tag",
-		.board_mask = DEVICE_BOARD_MASK_SPI | DEVICE_BOARD_MASK_RADIO_2P4G,
-		.platform_mask = DEVICE_PLATFORM_MASK_BUTTON,
-		.buttons = NULL,
-		.button_count = 0U,
-	},
+	{.product_id = NVS_DEVICE_ID_DEFAULT, .name = "factory"},
+	{.product_id = NVS_PROJECT_ID_DEMO, .name = "demo"},
+	{.product_id = NVS_PROJECT_ID_EINK_TAG, .name = "eink_tag"},
+	{.product_id = NVS_PROJECT_ID_INK_PANEL, .name = "ink_panel"},
+	{.product_id = NVS_PROJECT_ID_ZIGBEE_ED, .name = "zigbee_ed"},
+	{.product_id = NVS_PROJECT_ID_ZIGBEE_ROUTER, .name = "zigbee_router"},
 };
 
 static const device_product_profile_t *s_fallback = &s_product_profiles[0];
@@ -66,39 +50,4 @@ const char *device_profile_hardware_name(uint32_t hardware_id)
 	default:
 		return "unknown";
 	}
-}
-
-uint32_t device_profile_board_mask(void)
-{
-	return device_profile_product()->board_mask;
-}
-
-uint32_t device_profile_platform_mask(void)
-{
-	return device_profile_product()->platform_mask;
-}
-
-bool device_profile_board_wants(uint32_t mask)
-{
-	return (device_profile_board_mask() & mask) == mask;
-}
-
-bool device_profile_platform_wants(uint32_t mask)
-{
-	return (device_profile_platform_mask() & mask) == mask;
-}
-
-uint8_t device_profile_button_count(void)
-{
-	return device_profile_product()->button_count;
-}
-
-const device_button_spec_t *device_profile_button_spec(uint8_t index)
-{
-	const device_product_profile_t *p = device_profile_product();
-
-	if ((p->buttons == NULL) || (index >= p->button_count)) {
-		return NULL;
-	}
-	return &p->buttons[index];
 }

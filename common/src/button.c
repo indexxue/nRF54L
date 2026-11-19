@@ -9,14 +9,12 @@
 
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
-#include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
+#include "app_event.h"
 #include "board.h"
-#include "event.h"
 #include "flexible_button.h"
 #include "log.h"
-#include "nvs.h"
 
 #define BUTTON_MAX_NUM 8U
 #define BUTTON_FTM_SEQ_TIMEOUT_MS 8000
@@ -51,6 +49,15 @@ static uint8_t last_button_clicks;
 static uint16_t last_button_permission;
 static uint8_t s_ftm_expect = 5U;
 static int64_t s_ftm_deadline_ms;
+static button_ftm_done_cb_t s_ftm_done_cb;
+
+static void button_last_state_reset(void)
+{
+	last_button_id = BTN_ID_MAX_NUMBER;
+	last_button_event = BTN_EVENT_NONE;
+	last_button_clicks = 0U;
+	last_button_permission = 0U;
+}
 
 static uint8_t button_flex_read(void *flex)
 {
@@ -124,7 +131,7 @@ static void button_flex_event_callback(void *arg)
 	} else {
 		last_button_clicks = 0U;
 	}
-	event_set(EVT_ID_BUTTON);
+	k_event_post(&app_events, APP_EVT_BUTTON);
 
 	if (self.notify != NULL)
 	{
@@ -285,20 +292,9 @@ static void button_ftm_seq_reset(const char *why)
 	s_ftm_deadline_ms = 0;
 }
 
-static void button_ftm_boot_jump(void)
+void button_ftm_done_cb_set(button_ftm_done_cb_t cb)
 {
-	uint8_t cur = nvs_boot_mode_get();
-	uint8_t next = (cur == NVS_BOOT_MODE_FACTORY) ? NVS_BOOT_MODE_APP
-						     : NVS_BOOT_MODE_FACTORY;
-
-	if (!nvs_boot_mode_set(next)) {
-		LOG_ERROR("ftm jump: nvs_boot_mode_set(%u) failed", (unsigned)next);
-		return;
-	}
-	LOG_INFO("ftm jump: boot_mode %u → %u reboot (slot1 kept)", (unsigned)cur,
-		 (unsigned)next);
-	k_msleep(50);
-	sys_reboot(SYS_REBOOT_COLD);
+	s_ftm_done_cb = cb;
 }
 
 void button_ftm_seq_poll(void)
@@ -309,13 +305,13 @@ void button_ftm_seq_poll(void)
 	int64_t now;
 
 	/*
-	 * event_is_set() 会清掉 EVT 位。必须先看是否 FTM 键，否则非 FTM
+	 * app_event_take() 会清掉 BUTTON 位。必须先看是否 FTM 键，否则非 FTM
 	 *（如 eink_tag CONFIRM 双击切屏）会被 start_poll 吃掉，app 收不到。
 	 */
 	if ((button_last_permission_get() & (uint16_t)BTN_PERMISSION_FTM) == 0U) {
 		return;
 	}
-	if (!event_is_set(EVT_ID_BUTTON)) {
+	if (!app_event_take(APP_EVT_BUTTON)) {
 		return;
 	}
 
@@ -361,7 +357,11 @@ void button_ftm_seq_poll(void)
 
 	LOG_INFO("ftm seq: 2 ok");
 	button_ftm_seq_reset(NULL);
-	button_ftm_boot_jump();
+	if (s_ftm_done_cb != NULL) {
+		s_ftm_done_cb();
+	} else {
+		LOG_WARN("ftm seq done but no callback set");
+	}
 }
 
 static void button_wake_isr(const struct device *port, struct gpio_callback *cb, uint32_t pins)
@@ -369,7 +369,7 @@ static void button_wake_isr(const struct device *port, struct gpio_callback *cb,
 	ARG_UNUSED(port);
 	ARG_UNUSED(cb);
 	ARG_UNUSED(pins);
-	event_set_from_isr(EVT_ID_BUTTON);
+	k_event_post(&app_events, APP_EVT_BUTTON);
 }
 
 void button_wake_enable(void)
@@ -382,6 +382,11 @@ void button_wake_enable(void)
 	{
 		return;
 	}
+
+	/* Drop stale flex event so wake IRQ cannot fake an FTM click. */
+	button_last_state_reset();
+	button_ftm_seq_reset(NULL);
+	k_event_clear(&app_events, APP_EVT_BUTTON);
 
 	for (i = 0U; i < self.num; i++)
 	{
@@ -472,11 +477,8 @@ uint16_t button_last_permission_get(void)
 
 void button_last_event_clear(void)
 {
-	last_button_id = BTN_ID_MAX_NUMBER;
-	last_button_event = BTN_EVENT_NONE;
-	last_button_clicks = 0U;
-	last_button_permission = 0U;
-	event_clear(EVT_ID_BUTTON);
+	button_last_state_reset();
+	k_event_clear(&app_events, APP_EVT_BUTTON);
 }
 
 const char *button_id_to_str(btn_id_e id)

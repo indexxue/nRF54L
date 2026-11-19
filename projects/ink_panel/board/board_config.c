@@ -56,16 +56,11 @@ static const board_config_t s_board = {
 
 	.adcs = NULL,
 	.adc_count = 0U,
-	.inputs = NULL,
-	.input_count = 0U,
 	.pwms = NULL,
 	.pwm_count = 0U,
 
 	.buttons = s_buttons,
 	.button_count = (uint8_t)ARRAY_SIZE(s_buttons),
-
-	.irqs = NULL,
-	.irq_count = 0U,
 };
 
 const board_config_t *board_config_get(void)

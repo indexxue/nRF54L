@@ -13,14 +13,14 @@ extern "C" {
 #include "type.h"
 
 /**
- * Platform boot: log → event → nvs → board → (optional HFXO) → banner →
- * mask-gated LED bootup / button / input.
+ * Platform boot: log → nvs → board → (optional HFXO) → banner →
+ * mask-gated LED bootup / button. App wake bits: K_EVENT_DEFINE(app_events).
  * Call once from main before app_init().
  */
 status_t start_boot(void);
 
 /**
- * Common per-tick drivers: led_scene / button / FTM seq / input (no-op if not ready).
+ * Common per-tick drivers: led_scene / button / FTM seq.
  * Call from app_run() each loop iteration.
  */
 void start_poll(void);

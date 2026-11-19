@@ -1,90 +1,75 @@
 # common/
 
-Portable shared sources for apps under `projects/` (API aligned with ESP32/STM32 Common).
+跨 `projects/*` 共享的可移植源码（经 [`modules/nrf54_common`](../modules/nrf54_common) 编进 Zephyr）。
 
-**Ownership**: only code used by **more than one** app belongs here. Single-app code (e.g. factory `cmd`, buzzer) goes under `projects/<name>/lib/<module>/`.
+**归属**：只有 **多于一个** 工程使用的代码放这里；单工程逻辑放 `projects/<name>/lib/` 或 `source/`。
 
-Zephyr packaging lives under [`../modules/nrf54_common`](../modules/nrf54_common) — this tree has **no** `zephyr/` folder.
+规范见 [`doc/dev_norms.md`](../doc/dev_norms.md)。Phase 1A：唤醒用 `k_event`，CRC 用 `crc32_ieee`；**不**再维护自研 `event` / `crc32` / `input`。
 
-| Module | Header | Source | Origin | Notes |
-|--------|--------|--------|--------|-------|
-| types | `include/type.h` | — | ESP32 `type.h` | `status_t` without `esp_err` |
-| log | `include/log.h` | `src/log.c` | ESP/STM32 log | `k_mutex` + default `printk` |
-| version | `include/fw_version.h` | `src/fw_version.c` | new | `CONFIG_APP_VERSION_STRING`；勿用 `version.h`（与 Zephyr 冲突） |
-| flexible_button | `include/flexible_button.h` | `src/flexible_button.c` | ESP/STM32 | GPIO via read callback |
-| crc32 | `include/crc32.h` | `src/crc32.c` | STM32G431 | buffer CRC only |
-| event | `include/event.h` | `src/event.c` | STM32 event | `k_sem` / `k_mutex` |
-| flash_partition | `include/flash_partition.h` | — | nRF layout | 与 [`doc/flash_layout.md`](../doc/flash_layout.md) 一致 |
-| nvs | `include/nvs.h` | `src/nvs.c` | ESP nvs N2 精简 | Zephyr Settings；`did`/`hid`/`mac`/`sn`/`dtype`/`bmode` |
-| device_profile | `include/device_profile.h` | `src/device_profile.c` | ESP profile | SKU / product_id 能力掩码 |
-| board | `include/board.h` | `src/board.c` | new | **SoC** 外设 `board_config_t` + mask；片外器件不进此表 |
-| button | `include/button.h` | `src/button.c` | ESP/STM32 button | 业务按键；表来自 `board_button_spec` + `flexible_button` |
-| input | `include/input.h` | `src/input.c` | STM32 `tmp/input` | 板级 IRQ：`board_irq` + GPIO 双边沿 → `EVT_ID_INPUT` → `input_schedule` |
-| led_scene | `include/led_scene.h` | `src/led_scene.c` | STM32 `tmp/led_scene` | LED GPIO 来自 `board_config`（无 LED mask 则跳过） |
+| Module | Header | Source | Notes |
+|--------|--------|--------|-------|
+| types | `include/type.h` | — | `status_t` 等 |
+| app_event | `include/app_event.h` | — | `APP_EVT_*` + `extern app_events`；`K_EVENT_DEFINE` 在 `start.c` |
+| log | `include/log.h` | `src/log.c` | `k_mutex` + `printk`（暂不迁 Zephyr LOG） |
+| fw_version | `include/fw_version.h` | `src/fw_version.c` | `fw_version_get_string()` ← `CONFIG_APP_VERSION_STRING` |
+| flexible_button | `include/flexible_button.h` | `src/flexible_button.c` | 按键 FSM；经 `button` 使用 |
+| flash_partition | `include/flash_partition.h` | — | 对照 [`doc/flash_layout.md`](../doc/flash_layout.md) |
+| nvs | `include/nvs.h` | `src/nvs.c` | **Settings 业务壳**（`ty_app/*`），非自研 NVS |
+| device_profile | `include/device_profile.h` | `src/device_profile.c` | `product_id` → SKU 名；`hardware_id` → 板名 |
+| board | `include/board.h` | `src/board.c` | SoC 外设表 + mask；片外器件不进此表 |
+| button | `include/button.h` | `src/button.c` | 业务按键；FTM 完成回调由 `start` 写 boot_mode |
+| led_scene | `include/led_scene.h` | `src/led_scene.c` | LED 场景；GPIO 来自 `board_config` |
 
-**Not in common**: serial `cmd` — factory-only；片外 EPD/NFC 等 — 各工程 `source/`。
+**不在 common**：factory `cmd`；片外 EPD/NFC/CAP1203 等 → 各工程 `source/` / `board/`。
 
-## Board 配置（结构体 + 掩码）
-
-- SoC 射频：`BOARD_MASK_BLE` / `BOARD_MASK_NFC`（片上 NFCT，**不是** SPI 从机）
-- 片外模组（如 EPD）→ `projects/<name>/source/`，挂 SPI/I2C
-- 对照：[`demo`](../projects/demo)（UART×1 LED×2）vs [`eink_tag`](../projects/eink_tag)（UART×1 SPI×2 EPD+PN5180 登记 + BLE）
-- SPI：**总线** `spi_bus_count` 与 **从机** `spi_slave_count`（CS）分开计数；中断线用 `irq_count`
-- 按键：`button_init()` + 周期 `button_schedule()`（默认 20ms）
-- FTM 跳槽：键带 `BTN_PERMISSION_FTM` 即可；`start_poll()` → `button_ftm_seq_poll()`（连击 5→4→3→2）
-- 中断输入：`input_init()` 吃 `board_irq_*`；主循环 `input_schedule()`（去抖后回调）
+## 起机用法（经 start/）
 
 ```c
-board_init();
-button_init(button_log_notify);
-input_init(input_log_notify);
-/* loop: button_schedule(); input_schedule(); */
+/* start_boot 内部顺序摘要 */
+log_init → nvs_init → board_init
+→（可选）led_scene_init + BOOTUP
+→ button_init + button_ftm_done_cb_set(…)
+/* 主环 */
+start_poll(); /* led_scene_update + button_schedule + button_ftm_seq_poll */
 ```
 
-## Not migrated yet
-
-OTA/boot_slot、buzzer、battery — 板级 / B3 再做。
-
-## Usage in an app
-
-```cmake
-list(APPEND EXTRA_ZEPHYR_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_common)
-set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_SOURCE_DIR}/board/app.overlay)
-find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-target_sources(app PRIVATE board/board_config.c ...)
-```
+唤醒位：
 
 ```c
-#include "log.h"
-#include "fw_version.h"
-#include "nvs.h"
-#include "device_profile.h"
-#include "board.h"
-
-log_init(NULL);
-nvs_init();
-board_init();
-LOG_INFO("ver %s product=%s board=%s", version_get_string(),
-         device_profile_product()->name, board_config_get()->name);
+#include "app_event.h"
+k_event_post(&app_events, APP_EVT_BUTTON);
+(void)app_event_take(APP_EVT_BUTTON);
 ```
 
-`prj.conf` 需启用 Settings（demo/factory 已加）：
+## product_id（device_profile / nvs）
+
+| 工程 | 宏 | 默认 `CONFIG_NRF54_NVS_DEFAULT_DEVICE_ID` |
+|------|----|------------------------------------------|
+| factory | `NVS_DEVICE_ID_DEFAULT` | `0x0`（读 NVS `did`） |
+| demo | `NVS_PROJECT_ID_DEMO` | `0x53530110` |
+| eink_tag | `NVS_PROJECT_ID_EINK_TAG` | `0x53530120` |
+| ink_panel | `NVS_PROJECT_ID_INK_PANEL` | `0x53530130` |
+| zigbee_ed | `NVS_PROJECT_ID_ZIGBEE_ED` | `0x53530140` |
+| zigbee_router | `NVS_PROJECT_ID_ZIGBEE_ROUTER` | `0x53530150` |
+
+新产品：在 `nvs.h` 的 `NVS_PROJECT_ID_*` + `NVS_PROJECT_ID_TABLE` 加一行，并同步 `device_profile.c` 与工程 `prj.conf`。
+
+## Settings
 
 ```
 CONFIG_FLASH=y
 CONFIG_FLASH_MAP=y
+CONFIG_CRC=y
 CONFIG_NVS=y
 CONFIG_SETTINGS=y
 CONFIG_SETTINGS_NVS=y
 CONFIG_MPU_ALLOW_FLASH_WRITE=y
 ```
 
-产品固件设 `CONFIG_NRF54_NVS_DEFAULT_DEVICE_ID`（如 demo=`0x53530110`）；厂测保持 `0x0` 读 NVS `did`。
+业务禁止散落 `settings_save_one`；走 `nvs_*`。
 
-**SN**：Settings 无 `sn` 时首启生成 `T90M` + 8 hex 随机并落盘；厂测串口 `sn` / `sn <value>` 可改（≤15 字符）。BLE GATT UUID 前缀 = FNV-1a32(sn)。
+**SN**：无键时首启生成 `T90M` + 8 hex 并落盘。
 
-Do **not** include `zephyr/logging/log.h` in the same file as `log.h` (macro clash).
+Do **not** include `zephyr/logging/log.h` together with `log.h`（宏冲突）。
 
-**Version**: set `CONFIG_APP_VERSION_STRING="x.y.z"` in `prj.conf`, or let `nrf.cmd release <x.y.z>` write `prj_version.conf` (gitignored).
-
-**Release**: `nrf.cmd release` merges `prj_release.conf` → `CONFIG_APP_BUILD_RELEASE=y`, so `log_output()` in `src/log.c` is a no-op. App code may still call `LOG_*`; nothing is emitted.
+**Release**：`nrf.cmd release` → `CONFIG_APP_BUILD_RELEASE=y`，`log_output()` 为空操作。
