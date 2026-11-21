@@ -98,9 +98,9 @@ extern "C" {
 #define NVS_BOOT_MODE_APP     0U
 #define NVS_BOOT_MODE_FACTORY 1U
 
-/** 墨水屏面板尺寸（NVS 键 epanel）；上电选驱动 */
+/** 墨水屏面板尺寸（NVS 键 epanel）；上电选驱动；缺省/非法回退 4.2" */
 #define NVS_EPD_PANEL_2IN9 0U /**< GDEY029Z95 2.9" BWR 128×296 */
-#define NVS_EPD_PANEL_4IN2 1U /**< WS 4.2" B V2 BWR 400×300 */
+#define NVS_EPD_PANEL_4IN2 1U /**< WS 4.2" B V2 BWR 400×300（默认） */
 
 /* -------------------------------------------------------------------------- */
 /* 生命周期                                                                    */

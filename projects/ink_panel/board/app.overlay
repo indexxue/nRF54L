@@ -3,13 +3,13 @@
  *
  * UART00: TX=P2.02  RX=P2.00  (P2 与 SERIAL00 同域；不用 uart20，把 serial20 留给 spi20)
  *           外接 TTL：RX←P2.02，TX→P2.00，GND；勿接 Type-C D+/D−
- * EPD:    bit-bang SCK=P1.08 MOSI=P1.09；CS/DC/RST/BUSY GPIO（spi20 暂关：SPIM 预置 SCK 会 Bus Fault）
+ * EPD:    SPIM20 SCK=P1.08 MOSI=P1.09；CS=P1.10 软件拉；DC/RST/BUSY GPIO；无 MISO
  * I2C21:  SCL=P1.11 SDA=P1.12 (nPM1300 + CAP1203)
  * LED0:   P1.13 ACTIVE_LOW   (LED_STATUS_N)
  * BTN1:   P0.00 ACTIVE_LOW   (BTN_USER_N); no BTN2 (P0.01 = TOUCH_ALERT)
  *
- * Must disable DK leftovers: button0 shares P1.13 with LED; spi00+mx25
- * has no NOR on EVT and storms SPIM IRQs (CPU stuck in nrfx_spim).
+ * Must disable DK leftovers: button0 shares P1.13 with LED; button1/2 on
+ * P1.09/P1.08；pwm20 on P1.10；spi00+mx25 无 NOR 会刷 SPIM IRQ。
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -53,6 +53,23 @@
 		};
 	};
 
+	/* EPD SPIM20：SCK 必须 Clock pin P1.08；TX-only 不绑 MISO */
+	spi20_default: spi20_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 8)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 9)>;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
+		};
+	};
+
+	spi20_sleep: spi20_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 8)>,
+				<NRF_PSEL(SPIM_MOSI, 1, 9)>;
+			low-power-enable;
+		};
+	};
+
 };
 
 /* 控制台改 uart00，释放 serial20 给 spi20；脚仍 P2.02/P2.00 */
@@ -69,7 +86,12 @@
 };
 
 &spi20 {
-	status = "disabled";
+	status = "okay";
+	compatible = "nordic,nrf-spim";
+	pinctrl-0 = <&spi20_default>;
+	pinctrl-1 = <&spi20_sleep>;
+	pinctrl-names = "default", "sleep";
+	/* CS=P1.10 由 epd_board 软件控制，不挂 cs-gpios */
 };
 
 &i2c21 {
@@ -170,7 +192,7 @@
 		epd-pwr-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
 		touch-ldo-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
 		touch-alert-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-		/* EPD bit-bang：SCK/MOSI + CS/DC/RST/BUSY */
+		/* EPD：CS/DC/RST/BUSY GPIO；SCK/MOSI 供 bitbang 回退（SPIM 关时） */
 		epd-sck-gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
 		epd-mosi-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
 		epd-cs-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;

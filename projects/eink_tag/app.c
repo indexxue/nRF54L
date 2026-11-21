@@ -32,7 +32,6 @@
 #include "led_scene.h"
 #include "log.h"
 #include "nvs.h"
-#include "pn5180_board.h"
 
 #include <zephyr/sys/crc.h>
 
@@ -52,8 +51,15 @@
 #define APP_EPD_ENABLE      1
 /** 上电 ready 后自动 demo 全刷（刷在 EPD 线程，不堵 main） */
 #define APP_EPD_BOOT_DEMO   1
-/** 上电强制 4.2"；仅当 NVS 不是 4.2 时写一次 Flash */
-#define APP_EPD_FORCE_4IN2  1
+/** 上电强制面板；二选一，都为 0 则跟 NVS */
+#define APP_EPD_FORCE_4IN2  0
+#define APP_EPD_FORCE_2IN9  1
+/** 0=关闭 PN5180 初始化/扫卡/按键；1=启用 */
+#define APP_PN5180_ENABLE   0
+
+#if APP_PN5180_ENABLE
+#include "pn5180_board.h"
+#endif
 
 typedef enum {
 	APP_DISP_IDLE = 0,
@@ -121,9 +127,11 @@ static void app_sleep_enter(void)
 	s_sleeping = true;
 	atomic_set(&s_epd_led_applied, 0);
 
+#if APP_PN5180_ENABLE
 	if (pn5180_board_scan_is_active()) {
 		(void)pn5180_board_scan_stop();
 	}
+#endif
 
 	LOG_INFO("app: SLEEP enter (adv off, epd sleep, wake=BTN_PERMISSION_WAKE)");
 }
@@ -173,10 +181,12 @@ static bool app_sleep_can_enter(void)
 	if (ble_is_connected()) {
 		return false;
 	}
+#if APP_PN5180_ENABLE
 	if (pn5180_board_scan_is_active()) {
 		return false;
 	}
-	/* 骞挎挱绐楀彛鏈埌锛氫繚鎸佸彲鍙戠幇 */
+#endif
+	/* 广播窗口未到：保持可发现 */
 	if (k_uptime_get() < s_adv_deadline_ms) {
 		return false;
 	}
@@ -247,7 +257,6 @@ static void app_handle_button(void)
 {
 	btn_id_e id;
 	btn_event_e ev;
-	status_t st;
 
 	if (!app_event_take(APP_EVT_BUTTON)) {
 		return;
@@ -257,32 +266,36 @@ static void app_handle_button(void)
 	button_last_event_get(&id, &ev);
 	button_last_event_clear();
 
-	/* BTN2=BACK 鍗曞嚮锛歅N5180 鎵崱寮€/鍏?*/
+#if APP_PN5180_ENABLE
+	/* BTN2=BACK 单击：PN5180 扫卡开/关 */
 	if ((id == BTN_ID_BACK) && (ev == BTN_EVENT_SINGLE_CLICK)) {
+		status_t st;
+
 		if (!pn5180_board_is_ready()) {
 			LOG_WARN("app: BTN2 scan ignored (pn5180 not ready)");
 			return;
 		}
 		if (pn5180_board_scan_is_active()) {
 			st = pn5180_board_scan_stop();
-			LOG_INFO("app: BTN2 鈫?scan stop st=%d", (int)st);
+			LOG_INFO("app: BTN2 -> scan stop st=%d", (int)st);
 		} else {
 			st = pn5180_board_scan_start();
-			LOG_INFO("app: BTN2 鈫?scan start st=%d", (int)st);
+			LOG_INFO("app: BTN2 -> scan start st=%d", (int)st);
 		}
 		return;
 	}
+#endif
 
-	/* BTN1=CONFIRM锛氬弻鍑烩啋4.2"锛岄暱鎸?0s鈫?.9"锛涘甫 WAKE 鏉冮檺鐨勯敭鍙粠鐫＄湢鍞ら啋骞跺紑骞挎挱 */
+	/* BTN1=CONFIRM：双击→4.2"，长按10s→2.9"；带 WAKE 权限的键可从睡眠唤醒并开广播 */
 	if (id != BTN_ID_CONFIRM) {
 		return;
 	}
 
 	if (ev == BTN_EVENT_DOUBLE_CLICK) {
-		LOG_INFO("app: BTN double 鈫?4.2in");
+		LOG_INFO("app: BTN double -> 4.2in");
 		app_epd_panel_switch(NVS_EPD_PANEL_4IN2);
 	} else if (ev == BTN_EVENT_LONG_PRESS) {
-		LOG_INFO("app: BTN long 鈫?2.9in");
+		LOG_INFO("app: BTN long -> 2.9in");
 		app_epd_panel_switch(NVS_EPD_PANEL_2IN9);
 	}
 }
@@ -695,14 +708,27 @@ status_t app_init(void)
 
 	LOG_INFO("pins UART P1.04/P1.05 | LED_G P2.08 LED_B P2.09 | BTN P0.00/P0.01");
 	LOG_INFO("epd SPI00 SCK=P2.01 MOSI=P2.02 CS=P2.05 | DC=P2.00 RST=P2.03 BUSY=P2.07");
+#if APP_PN5180_ENABLE
 	LOG_INFO("pn5180 SPI22 SCK=P1.11 MOSI=P1.12 MISO=P1.13 NSS=P1.14 | BUSY=P1.08 RST=P1.07");
+#else
+	LOG_INFO("pn5180: disabled (APP_PN5180_ENABLE=0)");
+#endif
 
 	/* Keep BOOTUP G/B blink until EPD ready, then solid size LED */
 	panel = nvs_epd_panel_get();
 	LOG_INFO("app: NVS epanel=%u (%s) -- dbl=4.2in long10s=2.9in", (unsigned)panel,
 		 (panel == NVS_EPD_PANEL_4IN2) ? "4.2in" : "2.9in");
 
-#if APP_EPD_ENABLE && APP_EPD_FORCE_4IN2
+#if APP_EPD_ENABLE && APP_EPD_FORCE_2IN9
+	if (panel != NVS_EPD_PANEL_2IN9) {
+		if (!nvs_epd_panel_set(NVS_EPD_PANEL_2IN9)) {
+			LOG_ERROR("app: force 2.9in NVS write failed");
+		} else {
+			LOG_INFO("app: force epanel -> 2.9in (NVS updated)");
+			panel = NVS_EPD_PANEL_2IN9;
+		}
+	}
+#elif APP_EPD_ENABLE && APP_EPD_FORCE_4IN2
 	if (panel != NVS_EPD_PANEL_4IN2) {
 		if (!nvs_epd_panel_set(NVS_EPD_PANEL_4IN2)) {
 			LOG_ERROR("app: force 4.2in NVS write failed");
@@ -734,10 +760,11 @@ status_t app_init(void)
 	LOG_INFO("app: EPD init skipped (APP_EPD_ENABLE=0)");
 #endif
 
+#if APP_PN5180_ENABLE
 	/* PN5180: SPI smoke + scan thread; BTN2 click toggles scan */
 	st = pn5180_board_smoke();
 	if (st != STATUS_OK) {
-		LOG_ERROR("pn5180_board_smoke failed: %d (SPI/鎺ョ嚎/渚涚數?)", (int)st);
+		LOG_ERROR("pn5180_board_smoke failed: %d (SPI/接线/供电?)", (int)st);
 	} else {
 		st = pn5180_board_scan_init();
 		if (st != STATUS_OK) {
@@ -746,6 +773,7 @@ status_t app_init(void)
 			LOG_INFO("app: BTN2(P0.01) single-click = PN5180 scan toggle");
 		}
 	}
+#endif
 
 	return STATUS_OK;
 }
@@ -756,7 +784,11 @@ void app_run(void)
 
 	LOG_INFO("eink_tag run: PING | DISPLAY=demo | BEGIN/CHUNK/REFRESH | HB=%us",
 		 (unsigned int)(APP_HB_PERIOD_MS / 1000U));
-	LOG_INFO("eink_tag btn: CONFIRM dbl->4.2in | long10s->2.9in | BACK click->NFC scan");
+#if APP_PN5180_ENABLE
+	LOG_INFO("eink_tag btn: CONFIRM(P0.00) dbl->4.2in | long10s->2.9in | BACK(P0.01) click->NFC");
+#else
+	LOG_INFO("eink_tag btn: CONFIRM(P0.00) dbl->4.2in | long10s->2.9in | PN5180 off");
+#endif
 	LOG_INFO("eink_tag sleep: adv window %us; disc->re-adv %us then sleep; wake=WAKE btn",
 		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U),
 		 (unsigned int)(APP_ADV_WINDOW_MS / 1000U));
@@ -794,7 +826,11 @@ void app_run(void)
 				 tick / APP_HB_PERIOD_TICKS, ble_is_advertising() ? 1 : 0,
 				 ble_is_connected() ? 1 : 0, s_sleeping ? 1 : 0,
 				 (int)atomic_get(&s_epd_ready), epd_board_is_busy() ? 1 : 0,
+#if APP_PN5180_ENABLE
 				 pn5180_board_scan_is_active() ? 1 : 0,
+#else
+				 0,
+#endif
 				 (epd_board_size() == EPD_BOARD_SIZE_4IN2) ? "4.2in" : "2.9in");
 			app_ble_heartbeat_try(tick / APP_HB_PERIOD_TICKS);
 		}

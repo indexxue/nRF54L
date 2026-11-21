@@ -57,8 +57,8 @@ static uint8_t s_bw[EPD_PLANE_CAPACITY];
 static uint8_t s_red[EPD_PLANE_CAPACITY];
 static epd_display_t s_disp;
 static const epd_panel_info_t *s_panel;
-static uint8_t s_size = EPD_BOARD_SIZE_2IN9;
-static uint32_t s_plane_size = EPD_PLANE_2IN9;
+static uint8_t s_size = EPD_BOARD_SIZE_4IN2;
+static uint32_t s_plane_size = EPD_PLANE_4IN2;
 static bool s_ready;
 static bool s_asleep;
 static bool s_busy_usable = true;
@@ -371,7 +371,7 @@ status_t epd_board_init(void)
 
 	s_size = nvs_epd_panel_get();
 	if ((s_size != EPD_BOARD_SIZE_2IN9) && (s_size != EPD_BOARD_SIZE_4IN2)) {
-		s_size = EPD_BOARD_SIZE_2IN9;
+		s_size = EPD_BOARD_SIZE_4IN2;
 	}
 	s_panel = epd_board_pick_panel(s_size);
 	plane = epd_panel_plane_size(s_panel);
@@ -490,6 +490,14 @@ status_t epd_board_test_run(void)
 	}
 
 	st = epd_board_wake();
+	if (st != STATUS_OK) {
+		atomic_set(&s_refreshing, 0);
+		return st;
+	}
+
+	/* 先硬件擦白，再画 demo，减轻鬼影/残留 */
+	LOG_INFO("epd: erase screen before demo");
+	st = epd_refresh_step("erase", epd_display_clear_screen, EPD_COLOR_WHITE);
 	if (st != STATUS_OK) {
 		atomic_set(&s_refreshing, 0);
 		return st;

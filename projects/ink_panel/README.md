@@ -25,10 +25,10 @@ EVT 自有板 bring-up。无线链路为 **BLE Peripheral**（仓库 [`ble/`](..
 
 | 操作 | 行为 |
 |------|------|
-| BTN1 短按 | 打开/刷新 **30s** 可发现广播窗 + PAIRING 灯效 |
+| BTN1 **单击** | 入队 **EPD 擦白+BWR demo**（对齐 eink_tag；不复位，**RTT 不断**） |
 | BTN1 长按 ≈5s | `boot_mode=factory` + 冷复位（须 slot1 已烧 factory） |
-| 广播窗超时且未连接 | 停广播进入浅睡；BTN1（WAKE）再开窗 |
-| 已连接 | SUCCESS 灯效；断连后自动再广播并重新计时 30s |
+
+冒烟阶段以 EPD/RTT 为主；勿用复位键看日志（会断 J-Link RTT）。刷屏在 EPD 线程，main 只入队。
 
 ## BLE 冒烟（nRF Connect）
 
@@ -55,8 +55,61 @@ EVT 自有板 bring-up。无线链路为 **BLE Peripheral**（仓库 [`ble/`](..
 .\nrf.cmd -Project ink_panel flash
 ```
 
-期望串口：`ink_panel boot` / `ink_panel ok` / `ble: advertising`（BTN1 或上电窗内）。
+期望 RTT 日志：`ink_panel boot` / `ink_panel ok` / `epd: worker start` / `epd: boot demo done` 等。
 
-墨水屏：`prj.conf` 里 `CONFIG_INK_PANEL_EPD=n`（暂关）。要开屏改 `y` 后重编（画面上传协议仍后轮）。
+## 日志（J-Link RTT）
 
-NFC（片内 NFCT T2T）：`CONFIG_INK_PANEL_NFC=y`。期望串口 `nfc: bringup ok`；手机靠近见 `nfc: field on` / `data read` / `field off`；读到 Text `ink_panel NFC ok`。关改 `n`。
+本工程 **默认不用 UART 控制台**，`printk` 走 **SEGGER RTT**（见 `prj.conf`）：
+
+```conf
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_UART_CONSOLE=n
+```
+
+须 **J-Link 接好 SWD 且目标在跑**（可先 `flash` 再开 RTT；Viewer 与烧录不要抢同一把锁太久）。
+
+### 方式 A：仓库脚本（推荐）
+
+仓库已备启动脚本（依赖同目录下的 J-Link 工具包）：
+
+```powershell
+# 图形界面（看 printk / demo 日志）
+.\tmp\rtt\open_rtt_viewer.cmd
+
+# 命令行把 RTT 打到当前终端
+.\tmp\rtt\open_rtt_client.cmd
+```
+
+`tmp\rtt\jlink\` 里需有 `JLinkRTTViewer.exe` / `JLinkRTTClient.exe`（可从本机 SEGGER 安装目录拷贝，或把脚本里的 `JLINK=` 改成安装路径，例如 `C:\Program Files\SEGGER\JLink`）。
+
+### 方式 B：本机已装 SEGGER J-Link
+
+1. 打开 **J-Link RTT Viewer**（开始菜单或安装目录下的 `JLinkRTTViewer.exe`）
+2. 连接参数大致如下：
+   - **Connection**：USB
+   - **Specify Target Device**：`nRF54L15_M33`（或列表里的 nRF54L15）
+   - **Target Interface**：SWD
+   - **Speed**：4000 kHz（可先用默认）
+3. 通道用 **Terminal 0**（Zephyr `RTT_CONSOLE` 默认 up-buffer 0）
+4. 复位或重新上电后应持续刷出 `ink_panel` / `epd:` / `npm1300` 日志
+
+命令行等价：
+
+```powershell
+& "C:\Program Files\SEGGER\JLink\JLinkRTTClient.exe"
+```
+
+### 注意
+
+| 点 | 说明 |
+|----|------|
+| 与 UART | `CONFIG_UART_CONSOLE=n`，USB‑TTL 接 UART **看不到** 这些 `printk` |
+| 与 nrfutil/west flash | 烧录占用 J-Link 时 Viewer 可能断连；烧完再连 RTT |
+| 复位键 | 冷复位会断 RTT；看日志请用 **BTN1 单击** 重刷 demo |
+| 无输出 | 查 SWD 线、供电、是否烧的是 `ink_panel`、RTT Viewer 设备名是否选对 |
+| 改回 UART 日志 | `CONFIG_RTT_CONSOLE=n` + `CONFIG_UART_CONSOLE=y` 后重编（脚见上表） |
+
+墨水屏：`CONFIG_INK_PANEL_EPD=y`；总线默认 **GPIO bitbang**（对齐 `eink_tag`；`CONFIG_INK_PANEL_EPD_SPIM=n`）。脚：SCK=P1.08 MOSI=P1.09 CS=P1.10 DC=P1.05 RST=P1.06 BUSY=P1.07。实验 SPIM20：`CONFIG_INK_PANEL_EPD_SPIM=y`（当前首次 `spi_write` 会 Bus Fault）。关屏：`CONFIG_INK_PANEL_EPD=n`。
+
+NFC（片内 NFCT T2T）：`CONFIG_INK_PANEL_NFC=y`。期望 RTT `nfc: bringup ok`；手机靠近见 `nfc: field on` / `data read` / `field off`；读到 Text `ink_panel NFC ok`。关改 `n`。

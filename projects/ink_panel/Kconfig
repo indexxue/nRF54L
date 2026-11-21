@@ -1,11 +1,21 @@
 # ink_panel board feature options (sourced beside CMakeLists.txt).
 
 config INK_PANEL_EPD
-	bool "Enable e-ink panel (bitbang + smoke bringup)"
+	bool "Enable e-ink panel (smoke bringup)"
 	default y
 	help
 	  When disabled, epd_board / cbb/epd are not built and app skips
 	  EPD smoke/refresh. Use prj.conf CONFIG_INK_PANEL_EPD=n to gate off.
+
+config INK_PANEL_EPD_SPIM
+	bool "EPD bus via SPIM20 (vs GPIO bitbang)"
+	depends on INK_PANEL_EPD
+	select SPI
+	default n
+	help
+	  y: hardware SPIM20 on P1.08/P1.09, software CS on P1.10.
+	  当前 NCS 3.2.0 上首次 spi_write 会 Precise bus fault，默认关。
+	  n: GPIO bitbang（与 eink_tag EPD_USE_BITBANG=1 同路径）。
 
 config INK_PANEL_NFC
 	bool "Enable on-chip NFCT Type 2 Tag smoke"

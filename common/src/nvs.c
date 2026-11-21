@@ -93,7 +93,7 @@ static void nvs_cache_apply_defaults(void)
 		s_cache.boot_mode = NVS_BOOT_MODE_APP;
 	}
 	if (!s_cache.have_epanel) {
-		s_cache.epd_panel = NVS_EPD_PANEL_2IN9;
+		s_cache.epd_panel = NVS_EPD_PANEL_4IN2;
 	}
 }
 
@@ -376,7 +376,7 @@ void nvs_factory_reset(void)
 	s_cache.device_id = NVS_DEVICE_ID_DEFAULT;
 	s_cache.hardware_id = NVS_DEFAULT_HARDWARE_ID;
 	s_cache.boot_mode = NVS_BOOT_MODE_APP;
-	s_cache.epd_panel = NVS_EPD_PANEL_2IN9;
+	s_cache.epd_panel = NVS_EPD_PANEL_4IN2;
 	s_cache.have_dtype = 1U;
 	s_cache.have_did = s_cache.have_hid = s_cache.have_bmode = 1U;
 	s_cache.have_epanel = 1U;
@@ -671,7 +671,7 @@ uint8_t nvs_epd_panel_get(void)
 	}
 	if ((s_cache.epd_panel != NVS_EPD_PANEL_2IN9) &&
 	    (s_cache.epd_panel != NVS_EPD_PANEL_4IN2)) {
-		return NVS_EPD_PANEL_2IN9;
+		return NVS_EPD_PANEL_4IN2;
 	}
 	return s_cache.epd_panel;
 }

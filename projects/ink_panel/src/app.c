@@ -1,7 +1,6 @@
 /*
  * ink_panel — EVT 冒烟：UART + LED + nPM + EPD
- * EPD 在独立线程：hw_scan → bringup → 一次 BWR demo（与 eink_tag 共用 cbb 画图）。
- * main 只 start_poll，保证灯效不停。
+ * EPD：对齐 eink_tag（erase + BWR demo）；BTN1 单击入队重刷，不断 RTT。
  */
 
 #include "start.h"
@@ -23,7 +22,7 @@
 
 status_t app_init(void)
 {
-	printk("ink_panel boot (uart+led+npm+epd boot demo)\n");
+	printk("ink_panel boot (uart+led+npm+epd eink_tag-aligned)\n");
 	button_long_press_ms_set_id(BTN_ID_CONFIRM, 5000U);
 
 	if (npm1300_board_bringup() != 0) {
@@ -31,7 +30,6 @@ status_t app_init(void)
 	}
 
 #if IS_ENABLED(CONFIG_INK_PANEL_EPD)
-	/* scan/init/demo 在独立线程，不堵 main → 灯效仍跑 */
 	epd_board_smoke_start();
 #else
 	printk("epd: disabled\n");
@@ -54,7 +52,17 @@ static void app_handle_button(void)
 	button_last_event_clear();
 
 	if ((id == BTN_ID_CONFIRM) && (ev == BTN_EVENT_SINGLE_CLICK)) {
-		printk("app: BTN1 short\n");
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
+		status_t st = epd_board_demo_request();
+
+		if (st == STATUS_OK) {
+			printk("app: BTN1 click -> queue EPD erase+demo\n");
+		} else {
+			printk("app: BTN1 click rejected st=%d (EPD busy/not ready)\n", (int)st);
+		}
+#else
+		printk("app: BTN1 short (EPD off)\n");
+#endif
 		return;
 	}
 
@@ -73,7 +81,7 @@ void app_run(void)
 {
 	uint32_t tick = 0U;
 
-	printk("ink_panel run (LED + EPD boot demo once)\n");
+	printk("ink_panel run (LED + EPD eink_tag path; BTN1=re-demo)\n");
 
 	while (1) {
 		start_poll();

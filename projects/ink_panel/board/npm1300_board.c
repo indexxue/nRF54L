@@ -276,13 +276,14 @@ void npm1300_board_log_status(void)
 
 	(void)npm1300_buck_get_status(&g_npm1300, NPM1300_BUCK1, &buck);
 	(void)npm1300_charger_get_status(&g_npm1300, &chg);
-	(void)npm1300_ldsw_get_status(&g_npm1300, NPM1300_LDSW1, &ldsw);
+	/* LDSWSTATUS 共用：bit0/1≈LDSW1，bit2/3≈LDSW2（见 nPM1300 PS） */
+	(void)npm1300_ldsw_get_status(&g_npm1300, NPM1300_LDSW2, &ldsw);
 	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_BUCK1NORMVOUT, &vout);
 	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_BUCKSWCTRLSEL, &sw);
 	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_BUCK1VOUTST, &vst);
 	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_VBUSINSTATUS0, &vbus);
 
-	printk("npm1300 vout=0x%02x sw=0x%02x vst=0x%02x buck=0x%02x chg=0x%02x ldsw=0x%02x vbus=0x%02x inh=%d applied=%d\n",
+	printk("npm1300 vout=0x%02x sw=0x%02x vst=0x%02x buck=0x%02x chg=0x%02x ldsw=0x%02x(LDSWSTATUS) vbus=0x%02x inh=%d applied=%d\n",
 	       vout, sw, vst, buck, chg, ldsw, vbus, (int)s_charge_inhibit,
 	       (int)s_charge_applied);
 }

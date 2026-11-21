@@ -1,6 +1,6 @@
 /**
  * @file epd_board.h
- * @brief ink_panel：WS 4.2" B V2 板级胶水（DT GPIO + nPM1300；demo 与 eink_tag 共用）
+ * @brief ink_panel EPD：SPIM20 + nPM1300；erase + BWR demo
  */
 
 #ifndef INK_PANEL_EPD_BOARD_H
@@ -14,26 +14,23 @@
 extern "C" {
 #endif
 
-/**
- * 硬件在位扫描（无 MISO）：上电 + RST/SWRESET 后看 BUSY。
- * PRESENT → STATUS_OK；ABSENT → STATUS_FAIL。
- */
 status_t epd_board_hw_scan(void);
-
-/** 配置 GPIO、上电、init 面板（调用线程可能阻塞数秒） */
 status_t epd_board_bringup(void);
 
-/**
- * 与 eink_tag 同款 BWR demo 全刷（cbb epd_display_demo_bwr_fill）。
- * 阻塞调用线程；勿在 main 调。
- */
+/** 与 eink_tag 相同：先擦白再 BWR demo。阻塞调用线程；勿在 main 调。 */
 status_t epd_board_test_run(void);
 
-/**
- * 后台线程：hw_scan → bringup → **一次** demo 全刷（对齐 eink_tag 上电行为）。
- * 刷屏只堵本线程；main/灯效仍跑。
- */
+/** 仅擦白（兼容） */
+status_t epd_board_erase_run(void);
+
+/** 后台：bringup → 上电 erase+demo；之后收 BTN 重刷请求 */
 void epd_board_smoke_start(void);
+
+/** 入队再跑 erase+demo（K_NO_WAIT） */
+status_t epd_board_demo_request(void);
+
+/** 同 demo_request（按键用） */
+status_t epd_board_erase_request(void);
 
 bool epd_board_is_ready(void);
 bool epd_board_is_busy(void);

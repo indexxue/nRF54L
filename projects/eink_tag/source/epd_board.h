@@ -39,7 +39,7 @@ status_t epd_board_spi_selftest(void);
 status_t epd_board_init(void);
 
 /**
- * 黑白红 demo 全刷。
+ * 先硬件擦白，再黑白红 demo 全刷。
  * 阻塞**调用线程**（可能数十秒）；勿在 main 调用，以免卡住 start_poll 灯效。
  */
 status_t epd_board_test_run(void);
