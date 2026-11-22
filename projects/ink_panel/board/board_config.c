@@ -18,14 +18,7 @@ static const board_led_spec_t s_leds[] = {
 	{.gpio = &s_led0, .id = 0U, .name = "led_status"},
 };
 
-static const board_uart_spec_t s_uarts[] = {
-	{
-		.dev = DEVICE_DT_GET(DT_NODELABEL(uart00)),
-		.baud = 115200U,
-		.name = "console",
-	},
-};
-
+/* uart00 ?? spi00?W25Q????? RTT????? UART */
 static const board_button_spec_t s_buttons[] = {
 	{
 		.gpio = &s_btn1,
@@ -38,13 +31,13 @@ static const board_button_spec_t s_buttons[] = {
 
 static const board_config_t s_board = {
 	.name = "ink_panel_evt_smoke",
-	.mask = BOARD_MASK_UART | BOARD_MASK_LED | BOARD_MASK_BUTTON,
+	.mask = BOARD_MASK_LED | BOARD_MASK_BUTTON,
 
 	.leds = s_leds,
 	.led_count = (uint8_t)ARRAY_SIZE(s_leds),
 
-	.uarts = s_uarts,
-	.uart_count = (uint8_t)ARRAY_SIZE(s_uarts),
+	.uarts = NULL,
+	.uart_count = 0U,
 
 	.i2cs = NULL,
 	.i2c_count = 0U,

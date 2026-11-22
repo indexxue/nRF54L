@@ -20,6 +20,10 @@
 #include "epd_board.h"
 #endif
 
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+#include "w25q_board.h"
+#endif
+
 status_t app_init(void)
 {
 	printk("ink_panel boot (uart+led+npm+epd eink_tag-aligned)\n");
@@ -28,6 +32,14 @@ status_t app_init(void)
 	if (npm1300_board_bringup() != 0) {
 		printk("npm1300 bringup fail (EPD may lack power)\n");
 	}
+
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	if (w25q_board_smoke() != 0) {
+		printk("w25q smoke fail (NOR optional for EPD path)\n");
+	}
+#else
+	printk("w25q: disabled\n");
+#endif
 
 #if IS_ENABLED(CONFIG_INK_PANEL_EPD)
 	epd_board_smoke_start();

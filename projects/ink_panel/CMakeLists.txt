@@ -14,6 +14,7 @@ project(ink_panel)
 
 set(CBB_NPM1300_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/npm1300)
 set(CBB_EPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/epd)
+set(CBB_W25Q_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/w25q)
 
 target_sources(app PRIVATE
   src/app.c
@@ -33,6 +34,13 @@ if(CONFIG_INK_PANEL_EPD)
   )
 endif()
 
+if(CONFIG_INK_PANEL_W25Q)
+  target_sources(app PRIVATE
+    board/w25q_board.c
+    ${CBB_W25Q_DIR}/w25q.c
+  )
+endif()
+
 target_include_directories(app PRIVATE
   src
   board
@@ -42,4 +50,8 @@ target_include_directories(app PRIVATE
 
 if(CONFIG_INK_PANEL_EPD)
   target_include_directories(app PRIVATE ${CBB_EPD_DIR})
+endif()
+
+if(CONFIG_INK_PANEL_W25Q)
+  target_include_directories(app PRIVATE ${CBB_W25Q_DIR})
 endif()

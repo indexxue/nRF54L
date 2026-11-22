@@ -1,15 +1,16 @@
 /*
  * ink_panel — EVT netlist (Netlist_Schematic1_2026-11-05)
  *
- * UART00: TX=P2.02  RX=P2.00  (P2 与 SERIAL00 同域；不用 uart20，把 serial20 留给 spi20)
- *           外接 TTL：RX←P2.02，TX→P2.00，GND；勿接 Type-C D+/D−
+ * UART00: 与 spi00 互斥；NOR 占 SERIAL00 时关掉（日志走 RTT）
  * EPD:    SPIM20 SCK=P1.08 MOSI=P1.09；CS=P1.10 软件拉；DC/RST/BUSY GPIO；无 MISO
  * I2C21:  SCL=P1.11 SDA=P1.12 (nPM1300 + CAP1203)
+ * NOR:    SPIM00 SCK=P2.06 MOSI=P2.08 MISO=P2.09；CS=P2.10 软件拉；WP=P2.05 HOLD=P2.04
+ *         （P2 属 SERIAL00；spi21 与 i2c21 互斥；勿把 MISO 放进 E0E1 组）
  * LED0:   P1.13 ACTIVE_LOW   (LED_STATUS_N)
  * BTN1:   P0.00 ACTIVE_LOW   (BTN_USER_N); no BTN2 (P0.01 = TOUCH_ALERT)
  *
  * Must disable DK leftovers: button0 shares P1.13 with LED; button1/2 on
- * P1.09/P1.08；pwm20 on P1.10；spi00+mx25 无 NOR 会刷 SPIM IRQ。
+ * P1.09/P1.08；pwm20 on P1.10；mx25r64（DK 片上 NOR，EVT 无）。
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -70,15 +71,35 @@
 		};
 	};
 
+	/*
+	 * W25Q64 on SPIM00（P2 clock pin P2.06）。
+	 * MISO 单独一组、不加 E0E1——输入脚不可与 SCK/MOSI 同 drive-mode。
+	 */
+	spi00_nor_default: spi00_nor_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_MISO, 2, 9)>;
+		};
+		group2 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 6)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 8)>;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
+		};
+	};
+
+	spi00_nor_sleep: spi00_nor_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 6)>,
+				<NRF_PSEL(SPIM_MISO, 2, 9)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 8)>;
+			low-power-enable;
+		};
+	};
+
 };
 
-/* 控制台改 uart00，释放 serial20 给 spi20；脚仍 P2.02/P2.00 */
+/* SERIAL00：NOR 用 spi00，必须关 uart00（与 spi00 互斥）；日志走 RTT */
 &uart00 {
-	status = "okay";
-	current-speed = <115200>;
-	pinctrl-0 = <&uart00_default>;
-	pinctrl-1 = <&uart00_sleep>;
-	pinctrl-names = "default", "sleep";
+	status = "disabled";
 };
 
 &uart20 {
@@ -150,11 +171,16 @@
 	status = "disabled";
 };
 
-/* DK onboard MX25 SPI NOR — not present on EVT wiring */
+/* EVT 外挂 W25Q64：占 SERIAL00；CS 由 w25q_board 软件拉 */
 &spi00 {
-	status = "disabled";
+	status = "okay";
+	compatible = "nordic,nrf-spim";
+	pinctrl-0 = <&spi00_nor_default>;
+	pinctrl-1 = <&spi00_nor_sleep>;
+	pinctrl-names = "default", "sleep";
 };
 
+/* DK 片上 MX25 — EVT 无此器件 */
 &mx25r64 {
 	status = "disabled";
 };
@@ -181,9 +207,10 @@
 };
 
 / {
+	/* 控制台走 RTT；uart00 已让给 spi00 */
 	chosen {
-		zephyr,console = &uart00;
-		zephyr,shell-uart = &uart00;
+		/delete-property/ zephyr,console;
+		/delete-property/ zephyr,shell-uart;
 	};
 
 	zephyr,user {
@@ -200,5 +227,9 @@
 		epd-rst-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
 		/* 对齐 eink_tag：BUSY 内部上拉；无面板时也应读到高 */
 		epd-busy-gpios = <&gpio1 7 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+		/* W25Q64：CS 软件；WP/HOLD 驱高（板载 15k 上拉兜底） */
+		flash-cs-gpios = <&gpio2 10 GPIO_ACTIVE_LOW>;
+		flash-wp-gpios = <&gpio2 5 GPIO_ACTIVE_HIGH>;
+		flash-hold-gpios = <&gpio2 4 GPIO_ACTIVE_HIGH>;
 	};
 };

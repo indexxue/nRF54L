@@ -25,6 +25,15 @@ config INK_PANEL_NFC
 	  NDEF Text payload for EVT field/read smoke. Use prj.conf
 	  CONFIG_INK_PANEL_NFC=n to gate off.
 
+config INK_PANEL_W25Q
+	bool "Enable W25Q64 external SPI NOR smoke (SPIM00)"
+	select SPI
+	default y
+	help
+	  When enabled, builds w25q_board + cbb/w25q and runs JEDEC probe after
+	  nPM1300 bringup. Pins: SCK=P2.06 MOSI=P2.08 MISO=P2.09 CS=P2.10
+	  WP=P2.05 HOLD=P2.04. Uses spi00 (SERIAL00; disables uart00; RTT log).
+
 menu "Zephyr Kernel"
 source "Kconfig.zephyr"
 endmenu
