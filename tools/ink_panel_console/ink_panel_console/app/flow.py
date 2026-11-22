@@ -20,8 +20,8 @@ from ink_panel_console.config import (
     NOTES_CONTENT_MAX,
 )
 
-DEFAULT_NOTES_ENABLE = 3
-DEFAULT_INFO_ENABLE = 2
+DEFAULT_NOTES_ENABLE = 1  # 空组首次只加 1 页，再点「添加一页」
+DEFAULT_INFO_ENABLE = 1
 
 
 class Step(Enum):

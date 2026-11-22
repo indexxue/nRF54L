@@ -119,21 +119,30 @@ static void app_view_page_next(void)
 	(void)app_view_show(s_view_mode, next);
 }
 
-/** R：home → notes@1 → info@1 → home */
+/** R：home→notes@1；记事↔信息（不再回 home，回 LOGO 用 CS3） */
 static void app_view_mode_next(void)
 {
 	uint8_t mode = s_view_mode;
-	uint8_t page;
+	uint8_t page = 1U;
 
 	if (mode == PAGE_SLOT_MODE_HOME) {
 		mode = PAGE_SLOT_MODE_NOTES;
 	} else if (mode == PAGE_SLOT_MODE_NOTES) {
 		mode = PAGE_SLOT_MODE_INFO;
 	} else {
-		mode = PAGE_SLOT_MODE_HOME;
+		mode = PAGE_SLOT_MODE_NOTES;
 	}
-	page = (mode == PAGE_SLOT_MODE_HOME) ? 0U : 1U;
 	(void)app_view_show(mode, page);
+}
+
+/** CS3：回 LOGO/首页；已在首页则忽略，避免重复刷屏 */
+static void app_view_go_home(void)
+{
+	if (s_view_mode == PAGE_SLOT_MODE_HOME) {
+		printk("app: touch HOME ignored (already home)\n");
+		return;
+	}
+	(void)app_view_show(PAGE_SLOT_MODE_HOME, 0U);
 }
 
 static status_t app_slot_status_send(void)
@@ -692,13 +701,16 @@ static void app_handle_touch(void)
 		return;
 	}
 
-	printk("app: CAP click%s%s\n",
+	printk("app: CAP click%s%s%s\n",
 	       ((nav & CAP1203_NAV_L) != 0U) ? " L" : "",
-	       ((nav & CAP1203_NAV_R) != 0U) ? " R" : "");
+	       ((nav & CAP1203_NAV_R) != 0U) ? " R" : "",
+	       ((nav & CAP1203_NAV_HOME) != 0U) ? " HOME" : "");
 
 #if IS_ENABLED(CONFIG_INK_PANEL_EPD) && IS_ENABLED(CONFIG_INK_PANEL_W25Q)
-	/* 同时按下时优先切模 */
-	if ((nav & CAP1203_NAV_R) != 0U) {
+	/* 优先级：回首页 > 切模 > 翻页 */
+	if ((nav & CAP1203_NAV_HOME) != 0U) {
+		app_view_go_home();
+	} else if ((nav & CAP1203_NAV_R) != 0U) {
 		app_view_mode_next();
 	} else if ((nav & CAP1203_NAV_L) != 0U) {
 		app_view_page_next();

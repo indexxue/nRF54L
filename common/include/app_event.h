@@ -20,7 +20,7 @@ extern "C" {
 #define APP_EVT_BLE_CMD  BIT(1)
 /** GAP connect/disconnect — shallow-sleep wake. */
 #define APP_EVT_BLE_GAP  BIT(2)
-/** CAP1203 导航边沿（L/R）— cap1203_board_nav_take(). */
+/** CAP1203 导航边沿（L/R/HOME）— cap1203_board_nav_take(). */
 #define APP_EVT_TOUCH    BIT(3)
 
 #define APP_EVT_ANY \

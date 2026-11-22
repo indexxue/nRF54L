@@ -98,6 +98,9 @@ static void cap1203_board_nav_post(uint8_t rising)
 	if ((rising & CAP1203_CS2) != 0U) {
 		nav |= CAP1203_NAV_R;
 	}
+	if ((rising & CAP1203_CS3) != 0U) {
+		nav |= CAP1203_NAV_HOME;
+	}
 	if (nav == 0U) {
 		return;
 	}
@@ -135,8 +138,9 @@ static void cap1203_board_touch_handle(void)
 		/* 起机只建基线，避免上电误触导航 */
 		s_last_mask = mask;
 		s_have_last = true;
-		printk("cap1203: baseline mask=0x%02x (L=%d R=%d)\n", mask,
-		       (mask & CAP1203_CS1) ? 1 : 0, (mask & CAP1203_CS2) ? 1 : 0);
+		printk("cap1203: baseline mask=0x%02x (L=%d R=%d H=%d)\n", mask,
+		       (mask & CAP1203_CS1) ? 1 : 0, (mask & CAP1203_CS2) ? 1 : 0,
+		       (mask & CAP1203_CS3) ? 1 : 0);
 		rising = 0U;
 		falling = 0U;
 	} else {
@@ -146,13 +150,15 @@ static void cap1203_board_touch_handle(void)
 	}
 
 	if (rising != 0U) {
-		printk("cap1203: CLICK down mask=0x%02x L=%d R=%d\n", rising,
-		       (rising & CAP1203_CS1) ? 1 : 0, (rising & CAP1203_CS2) ? 1 : 0);
+		printk("cap1203: CLICK down mask=0x%02x L=%d R=%d H=%d\n", rising,
+		       (rising & CAP1203_CS1) ? 1 : 0, (rising & CAP1203_CS2) ? 1 : 0,
+		       (rising & CAP1203_CS3) ? 1 : 0);
 		cap1203_board_nav_post(rising);
 	}
 	if (falling != 0U) {
-		printk("cap1203: CLICK up   mask=0x%02x L=%d R=%d\n", falling,
-		       (falling & CAP1203_CS1) ? 1 : 0, (falling & CAP1203_CS2) ? 1 : 0);
+		printk("cap1203: CLICK up   mask=0x%02x L=%d R=%d H=%d\n", falling,
+		       (falling & CAP1203_CS1) ? 1 : 0, (falling & CAP1203_CS2) ? 1 : 0,
+		       (falling & CAP1203_CS3) ? 1 : 0);
 	}
 
 	(void)cap1203_clear_int(&g_cap1203);
@@ -226,8 +232,8 @@ int cap1203_board_bringup(void)
 		.i2c_addr = CAP1203_ADDR_7BIT_DEFAULT,
 	};
 	cap1203_setup_t setup = {
-		.sensor_enable = CAP1203_CS1 | CAP1203_CS2,
-		.interrupt_enable = CAP1203_CS1 | CAP1203_CS2,
+		.sensor_enable = CAP1203_CS_ALL,
+		.interrupt_enable = CAP1203_CS_ALL,
 		.delta_sense = 1u,
 		.disable_multitouch_block = true,
 	};
@@ -288,7 +294,7 @@ int cap1203_board_bringup(void)
 	if (cap1203_board_irq_init() != 0) {
 		printk("cap1203 irq fail (fallback poll)\n");
 	} else {
-		printk("cap1203 ok cs1=L cs2=R irq addr=0x28\n");
+		printk("cap1203 ok cs1=L cs2=R cs3=HOME irq addr=0x28\n");
 	}
 
 	s_ready = true;

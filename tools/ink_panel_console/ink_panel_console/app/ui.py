@@ -28,6 +28,7 @@ from ink_panel_console.app.flow import (
     UiState,
     apply_slot_status,
     can_push,
+    content_max,
     current_step,
     default_enable_count,
     describe_target,
@@ -52,8 +53,11 @@ from ink_panel_console.config import (
 from ink_panel_console.panel import image_to_planes
 from ink_panel_console.paths import nrf_console_root
 from ink_panel_console.templates.render import (
+    NOTES_ITEMS_MAX,
+    NOTES_ITEMS_MIN,
     InfoForm,
     NotesForm,
+    NotesItem,
     compose_home_overlay,
     render_blank_home,
     render_info_door,
@@ -85,6 +89,8 @@ class ConsoleApp(ctk.CTk):
         self._info_form = InfoForm()
         self._page_btns: dict[tuple[int, int], ctk.CTkButton] = {}
         self._render_job: str | None = None
+        self._pending_select: tuple[int, int] | None = None
+        self._pending_show: bool | None = None
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -240,24 +246,51 @@ class ConsoleApp(ctk.CTk):
 
     def _build_notes_editor(self, parent: ctk.CTkFrame) -> None:
         self.notes_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        ctk.CTkLabel(self.notes_frame, text="今日三件事", text_color=_PAPER).pack(anchor="w")
-        self.notes_title = ctk.CTkEntry(self.notes_frame, placeholder_text="页标题")
+        ctk.CTkLabel(
+            self.notes_frame,
+            text="记事（1～5 条自适应）",
+            text_color=_PAPER,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(anchor="w")
+        self.notes_title = ctk.CTkEntry(self.notes_frame, placeholder_text="自定义标题，如 今日事项")
         self.notes_title.insert(0, self._notes_form.title)
         self.notes_title.pack(fill="x", pady=4)
         self.notes_title.bind("<KeyRelease>", lambda _e: self._schedule_render())
-        self.notes_items: list[ctk.CTkEntry] = []
-        for i in range(3):
-            e = ctk.CTkEntry(self.notes_frame, placeholder_text=f"事项 {i + 1}")
-            e.pack(fill="x", pady=3)
-            e.bind("<KeyRelease>", lambda _e: self._schedule_render())
-            self.notes_items.append(e)
+
+        self.notes_items_host = ctk.CTkScrollableFrame(
+            self.notes_frame, fg_color="transparent", height=280
+        )
+        self.notes_items_host.pack(fill="both", expand=True, pady=4)
+        self._notes_rows: list[dict] = []
+
+        bar = ctk.CTkFrame(self.notes_frame, fg_color="transparent")
+        bar.pack(fill="x", pady=4)
+        ctk.CTkButton(bar, text="＋ 添加", width=72, height=28, command=self._notes_add_item).pack(
+            side="left", padx=(0, 4)
+        )
+        ctk.CTkButton(
+            bar, text="－ 删除末条", width=88, height=28, fg_color="#5a4038", command=self._notes_del_item
+        ).pack(side="left")
+
         self.notes_accent = ctk.CTkOptionMenu(
             self.notes_frame,
-            values=["无强调", "强调第 1 条", "强调第 2 条", "强调第 3 条"],
+            values=["无强调"],
             command=lambda _v: self._schedule_render(),
         )
         self.notes_accent.set("无强调")
-        self.notes_accent.pack(fill="x", pady=6)
+        self.notes_accent.pack(fill="x", pady=(6, 2))
+        ctk.CTkLabel(
+            self.notes_frame,
+            text="每条可勾完成、填时间；红强调可选一条",
+            text_color=_MUTED,
+            font=ctk.CTkFont(size=11),
+        ).pack(anchor="w")
+
+        # 默认 3 条
+        for _ in range(3):
+            self._notes_add_item(render=False)
+        self._notes_refresh_accent_menu()
+
 
     def _build_info_editor(self, parent: ctk.CTkFrame) -> None:
         self.info_frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -407,18 +440,27 @@ class ConsoleApp(ctk.CTk):
                 fr,
                 text=C.BTN_ENABLE_NOTES,
                 fg_color=_OK,
-                command=lambda: self._enable_group(MODE_NOTES),
+                command=lambda: self._add_content_page(MODE_NOTES),
             ).pack(fill="x", pady=2)
         else:
             for p in pages:
                 self._add_page_btn(fr, MODE_NOTES, p, f"第 {p} 页")
+            row = ctk.CTkFrame(fr, fg_color="transparent")
+            row.pack(fill="x", pady=(6, 2))
             ctk.CTkButton(
-                fr,
-                text="删除最后一页",
+                row,
+                text=C.BTN_ADD_PAGE,
+                fg_color=_OK,
+                height=28,
+                command=lambda: self._add_content_page(MODE_NOTES),
+            ).pack(side="left", fill="x", expand=True, padx=(0, 3))
+            ctk.CTkButton(
+                row,
+                text=C.BTN_DEL_PAGE,
                 fg_color="#5a4038",
                 height=28,
                 command=lambda: self._delete_last_page(MODE_NOTES),
-            ).pack(fill="x", pady=(6, 2))
+            ).pack(side="left", fill="x", expand=True, padx=(3, 0))
 
         # info
         i_title = self.ui.info_title or C.GROUP_INFO
@@ -429,18 +471,27 @@ class ConsoleApp(ctk.CTk):
                 fr,
                 text=C.BTN_ENABLE_INFO,
                 fg_color=_OK,
-                command=lambda: self._enable_group(MODE_INFO),
+                command=lambda: self._add_content_page(MODE_INFO),
             ).pack(fill="x", pady=2)
         else:
             for p in pages:
                 self._add_page_btn(fr, MODE_INFO, p, f"第 {p} 页")
+            row = ctk.CTkFrame(fr, fg_color="transparent")
+            row.pack(fill="x", pady=(6, 2))
             ctk.CTkButton(
-                fr,
-                text="删除最后一页",
+                row,
+                text=C.BTN_ADD_PAGE,
+                fg_color=_OK,
+                height=28,
+                command=lambda: self._add_content_page(MODE_INFO),
+            ).pack(side="left", fill="x", expand=True, padx=(0, 3))
+            ctk.CTkButton(
+                row,
+                text=C.BTN_DEL_PAGE,
                 fg_color="#5a4038",
                 height=28,
                 command=lambda: self._delete_last_page(MODE_INFO),
-            ).pack(fill="x", pady=(6, 2))
+            ).pack(side="left", fill="x", expand=True, padx=(3, 0))
 
     def _add_page_btn(self, parent: ctk.CTkFrame, mode: int, page: int, label: str) -> None:
         btn = ctk.CTkButton(
@@ -488,13 +539,86 @@ class ConsoleApp(ctk.CTk):
                 pass
         self._render_job = self.after(180, self._render_form)
 
+    def _notes_add_item(self, *, render: bool = True) -> None:
+        if len(self._notes_rows) >= NOTES_ITEMS_MAX:
+            self._log(f"最多 {NOTES_ITEMS_MAX} 条")
+            return
+        idx = len(self._notes_rows)
+        row = ctk.CTkFrame(self.notes_items_host, fg_color="#2a2826", corner_radius=6)
+        row.pack(fill="x", pady=3)
+        head = ctk.CTkFrame(row, fg_color="transparent")
+        head.pack(fill="x", padx=6, pady=(4, 0))
+        ctk.CTkLabel(head, text=f"#{idx + 1}", text_color=_MUTED, width=28).pack(side="left")
+        done_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            head, text="完成", variable=done_var, width=60, command=self._schedule_render, text_color=_PAPER
+        ).pack(side="left", padx=4)
+        time_e = ctk.CTkEntry(head, width=64, placeholder_text="时间")
+        time_e.pack(side="right", padx=2)
+        time_e.bind("<KeyRelease>", lambda _e: self._schedule_render())
+        text_e = ctk.CTkEntry(row, placeholder_text="事项内容")
+        text_e.pack(fill="x", padx=6, pady=(2, 6))
+        text_e.bind("<KeyRelease>", lambda _e: self._schedule_render())
+        self._notes_rows.append(
+            {"frame": row, "done": done_var, "time": time_e, "text": text_e}
+        )
+        self._notes_refresh_accent_menu()
+        if render:
+            self._schedule_render()
+
+    def _notes_del_item(self) -> None:
+        if len(self._notes_rows) <= NOTES_ITEMS_MIN:
+            self._log(f"至少保留 {NOTES_ITEMS_MIN} 条")
+            return
+        row = self._notes_rows.pop()
+        row["frame"].destroy()
+        # 重标序号
+        for i, r in enumerate(self._notes_rows):
+            for child in r["frame"].winfo_children():
+                if isinstance(child, ctk.CTkFrame):
+                    for sub in child.winfo_children():
+                        if isinstance(sub, ctk.CTkLabel) and str(sub.cget("text")).startswith("#"):
+                            sub.configure(text=f"#{i + 1}")
+                            break
+        self._notes_refresh_accent_menu()
+        self._schedule_render()
+
+    def _notes_refresh_accent_menu(self) -> None:
+        n = len(self._notes_rows)
+        values = ["无强调"] + [f"强调第 {i} 条" for i in range(1, n + 1)]
+        cur = self.notes_accent.get() if hasattr(self, "notes_accent") else "无强调"
+        self.notes_accent.configure(values=values)
+        if cur not in values:
+            self.notes_accent.set("无强调")
+        else:
+            self.notes_accent.set(cur)
+
     def _read_notes_form(self) -> NotesForm:
-        accent_map = {"无强调": 0, "强调第 1 条": 1, "强调第 2 条": 2, "强调第 3 条": 3}
         page = self.ui.target.page if self.ui.target else 1
+        items: list[NotesItem] = []
+        for r in self._notes_rows:
+            items.append(
+                NotesItem(
+                    text=r["text"].get(),
+                    done=bool(r["done"].get()),
+                    time=r["time"].get().strip(),
+                )
+            )
+        if not items:
+            items = [NotesItem()]
+        accent = 0
+        label = self.notes_accent.get()
+        if label.startswith("强调第"):
+            try:
+                accent = int(label.replace("强调第", "").replace("条", "").strip())
+            except ValueError:
+                accent = 0
+        if accent > len(items):
+            accent = 0
         return NotesForm(
-            title=self.notes_title.get().strip() or "今日三件事",
-            items=[e.get() for e in self.notes_items],
-            accent=accent_map.get(self.notes_accent.get(), 0),
+            title=self.notes_title.get().strip() or "今日事项",
+            items=items,
+            accent=accent,
             page=page,
         )
 
@@ -647,19 +771,30 @@ class ConsoleApp(ctk.CTk):
         )
         self._pending_show = show
 
-    def _enable_group(self, mode: int) -> None:
+    def _add_content_page(self, mode: int) -> None:
+        """左侧：添加记事/信息的一页（count+1，上限 notes7 / info3）。"""
         if not self.ui.connected:
             self.guide.configure(text=C.format_status("hint_disabled_connect"))
             return
-        count = default_enable_count(mode)
-        title = "记事" if mode == MODE_NOTES else "信息"
+        cur = self.ui.notes_count if mode == MODE_NOTES else self.ui.info_count
+        max_c = content_max(mode)
+        name = "记事" if mode == MODE_NOTES else "信息"
+        if cur >= max_c:
+            self._log(f"{name}已满（最多 {max_c} 页）")
+            return
+        new_count = cur + 1 if cur > 0 else default_enable_count(mode)
+        title = self.ui.notes_title if mode == MODE_NOTES else self.ui.info_title
+        if not title:
+            title = name
         try:
-            payload = pack_set_group_meta(mode, count, title)
+            payload = pack_set_group_meta(mode, new_count, title)
         except ValueError as exc:
             self._log(str(exc))
             return
         self.controller.send_frame(BLE_CMD_SET_GROUP_META, payload)
-        self._log(f"正在启用{title}（{count} 页）…")
+        self._log(f"正在添加{name}第 {new_count} 页…")
+        self._pending_select = (mode, new_count)
+        self.after(400, lambda: self.controller.send_frame(BLE_CMD_GET_SLOT_STATUS, b""))
 
     def _delete_last_page(self, mode: int) -> None:
         """v1：只删最后一页（4003）。"""
@@ -842,6 +977,13 @@ class ConsoleApp(ctk.CTk):
             self._log(
                 f"桌牌信息：记事{self.ui.notes_count}页 / 信息{self.ui.info_count}页"
             )
+            pending = self._pending_select
+            if pending is not None:
+                self._pending_select = None
+                mode, page = pending
+                avail = pages_for_mode(self.ui, mode)
+                if page in avail:
+                    self._select_target(mode, page)
             if self.ui.target and self.ui.target.mode == MODE_HOME:
                 self._refresh_home_preview()
             else:

@@ -73,11 +73,24 @@ def _draw_border(draw, w: int, h: int) -> None:
     draw.rectangle([0, 0, w - 1, h - 1], outline=(0, 0, 0), width=2)
 
 
+NOTES_ITEMS_MAX = 5
+NOTES_ITEMS_MIN = 1
+
+
+@dataclass
+class NotesItem:
+    text: str = ""
+    done: bool = False
+    time: str = ""  # 可选，如 09:30
+
+
 @dataclass
 class NotesForm:
-    title: str = "今日三件事"
-    items: list[str] = field(default_factory=lambda: ["", "", ""])
-    accent: int = 0  # 1..3 红强调；0=无
+    title: str = "今日事项"
+    items: list[NotesItem] = field(
+        default_factory=lambda: [NotesItem(), NotesItem(), NotesItem()]
+    )
+    accent: int = 0  # 1..n 红强调；0=无
     page: int = 1  # 内容页号；只显示「第 N 页」，不印总页
 
 
@@ -105,40 +118,95 @@ def _page_badge(draw, font, page: int, w: int) -> None:
     draw.text((x, 10), text, font=font, fill=(255, 255, 255))
 
 
+def _normalize_notes_items(items: list[NotesItem] | list[str]) -> list[NotesItem]:
+    out: list[NotesItem] = []
+    for it in items:
+        if isinstance(it, NotesItem):
+            out.append(it)
+        else:
+            out.append(NotesItem(text=str(it)))
+    if not out:
+        out = [NotesItem()]
+    return out[:NOTES_ITEMS_MAX]
+
+
 def render_notes_three(form: NotesForm) -> tuple[bytes, bytes]:
+    """记事页：1..5 条自适应行高；完成勾选 / 时间 / 红强调。"""
     from PIL import Image, ImageDraw
 
     w, h = PANEL.width, PANEL.height
     img = Image.new("RGB", (w, h), (255, 255, 255))
     draw = ImageDraw.Draw(img)
-    title_font = _load_font(28)
-    body_font = _load_font(22)
-    small_font = _load_font(16)
-    badge_font = _load_font(18)
+    title_font = _load_font(26)
+    body_font = _load_font(20)
+    time_font = _load_font(14)
+    small_font = _load_font(14)
+    badge_font = _load_font(16)
 
-    # 顶栏
+    title = (form.title or "今日事项").strip() or "今日事项"
     draw.rectangle([0, 0, w, 48], fill=(0, 0, 0))
-    draw.text((16, 10), (form.title or "今日三件事")[:14], font=title_font, fill=(255, 255, 255))
+    draw.text((16, 10), title[:16], font=title_font, fill=(255, 255, 255))
     _page_badge(draw, badge_font, form.page, w)
 
-    items = list(form.items) + ["", "", ""]
-    items = items[:3]
-    y0 = 70
-    for i, text in enumerate(items):
-        y = y0 + i * 70
-        box = [20, y, w - 20, y + 56]
-        accent = form.accent == (i + 1)
-        if accent:
-            draw.rectangle(box, outline=(194, 59, 42), width=3)
-            draw.ellipse([28, y + 14, 56, y + 42], outline=(194, 59, 42), width=2)
-        else:
-            draw.rectangle(box, outline=(0, 0, 0), width=2)
-            draw.ellipse([28, y + 14, 56, y + 42], outline=(0, 0, 0), width=2)
-        label = text.strip() or f"事项 {i + 1}"
-        color = (194, 59, 42) if accent else (0, 0, 0)
-        draw.text((70, y + 14), label[:18], font=body_font, fill=color)
+    items = _normalize_notes_items(list(form.items))
+    n = max(NOTES_ITEMS_MIN, min(NOTES_ITEMS_MAX, len(items)))
+    items = items[:n]
+    top = 56
+    bottom = h - 26
+    avail = max(40, bottom - top)
+    row_h = max(36, avail // n)
+    # 条数多时略缩正文
+    if n >= 5:
+        body_font = _load_font(16)
+    elif n >= 4:
+        body_font = _load_font(18)
 
-    draw.text((16, h - 28), "ink_panel · 记事", font=small_font, fill=(80, 80, 80))
+    for i, item in enumerate(items):
+        y = top + i * row_h
+        box_y1 = min(y + row_h - 4, bottom - 2)
+        box = [16, y + 2, w - 16, box_y1]
+        accent = form.accent == (i + 1)
+        stroke = (194, 59, 42) if accent else (0, 0, 0)
+        width = 3 if accent else 2
+        draw.rectangle(box, outline=stroke, width=width)
+
+        # 完成圆 / 勾
+        cy = y + (row_h // 2)
+        r = 11
+        cx = 36
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=stroke, width=2)
+        if item.done:
+            draw.ellipse([cx - r + 3, cy - r + 3, cx + r - 3, cy + r - 3], fill=stroke)
+            # 简易对勾
+            draw.line([(cx - 5, cy), (cx - 1, cy + 5), (cx + 6, cy - 5)], fill=(255, 255, 255), width=2)
+
+        label = (item.text or "").strip() or f"事项 {i + 1}"
+        color = (194, 59, 42) if accent else ((120, 120, 120) if item.done else (0, 0, 0))
+        text_x = 56
+        # 右侧留时间
+        time_s = (item.time or "").strip()[:8]
+        max_chars = 14 if time_s else 18
+        if n >= 4:
+            max_chars = 12 if time_s else 16
+        draw.text((text_x, cy - 12), label[:max_chars], font=body_font, fill=color)
+        if item.done:
+            # 删除线示意
+            try:
+                bbox = draw.textbbox((text_x, cy - 12), label[:max_chars], font=body_font)
+                draw.line([(bbox[0], (bbox[1] + bbox[3]) // 2), (bbox[2], (bbox[1] + bbox[3]) // 2)],
+                          fill=color, width=1)
+            except Exception:  # noqa: BLE001
+                pass
+        if time_s:
+            tw = 0
+            try:
+                bbox = draw.textbbox((0, 0), time_s, font=time_font)
+                tw = bbox[2] - bbox[0]
+            except Exception:  # noqa: BLE001
+                tw = len(time_s) * 8
+            draw.text((w - 24 - tw, cy - 8), time_s, font=time_font, fill=stroke)
+
+    draw.text((16, h - 22), "ink_panel · 记事", font=small_font, fill=(80, 80, 80))
     _draw_border(draw, w, h)
     return _rgb_to_planes(img)
 
