@@ -1,14 +1,22 @@
 # ink_panel
 
-EVT 自有板 bring-up。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)）。
+EVT 自有板。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)），支持 **EPD 平面上传**（对齐 `eink_tag` / [`ble/docs/display_plane_upload.md`](../../ble/docs/display_plane_upload.md)）。
 
-规格（历史 Zigbee 轮）：[`docs/superpowers/specs/2026-11-12-ink-panel-design.md`](../../docs/superpowers/specs/2026-11-12-ink-panel-design.md)  
-本轮：Zigbee → BLE 档1（可连 + PING；EPD 上传后轮）。
+**进度页入口** → [`tmp/ink_panel/index.html`](../../tmp/ink_panel/index.html)  
+- 最终产品终端 → [`product.html`](../../tmp/ink_panel/product.html)  
+- 当前所处阶段 → [`stage.html`](../../tmp/ink_panel/stage.html)  
+- 文字说明 → [`PRODUCT.md`](../../tmp/ink_panel/PRODUCT.md)  
+- **联调工具（GUI）** → [`tools/ink_panel_console`](../../tools/ink_panel_console)：`python main.py`（关联 [`nrf_console`](../../tools/nrf_console)）
 
 | 层 | 路径 |
 |----|------|
-| 产品（按键/灯效/日志/CMD） | `src/app.c` |
+| 产品（按键/CMD/会话） | `src/app.c` |
 | BLE 协议（仓库共享） | `ble/` via `modules/nrf54_ble` |
+| EPD 胶水 | `board/epd_board.*` + `cbb/epd` |
+| 进度与终态预览 | `tmp/ink_panel/` |
+
+本轮（α）：W25Q **页槽**（home/notes/info）+ 开机刷 slot0；BLE REFRESH 写入 home/0。  
+本轮不做：NFC 业务、字库描字、CAP1203（γ）、BEGIN mode/page（β）。
 
 ## 板级（EVT 网表）
 
@@ -20,28 +28,61 @@ EVT 自有板 bring-up。无线链路为 **BLE Peripheral**（仓库 [`ble/`](..
 | BTN1 | `BTN_USER_N` | **P0.00** |
 | BTN2 | — | **未接**（勿占用 `TOUCH_ALERT` P0.01） |
 | BLE 2.4G | — | 片上 RADIO（设备名 `ink_panel`） |
+| EPD | — | SCK=P1.08 MOSI=P1.09 CS=P1.10 DC=P1.05 RST=P1.06 BUSY=P1.07 |
+| W25Q64 | — | SPIM00：SCK=P2.06 MOSI=P2.08 MISO=P2.09 CS=P2.10（字库/图形预留） |
 
-## 按键 / LED / 低功耗
+## 按键
 
 | 操作 | 行为 |
 |------|------|
-| BTN1 **单击** | 入队 **EPD 擦白+BWR demo**（对齐 eink_tag；不复位，**RTT 不断**） |
+| BTN1 **单击** | 已连接 → **断连**（随后自动再广播）；未连接 → **开广播**以便重连 |
+| BTN1 **双击** | 预留（2.9" 已去掉） |
 | BTN1 长按 ≈5s | `boot_mode=factory` + 冷复位（须 slot1 已烧 factory） |
 
-冒烟阶段以 EPD/RTT 为主；勿用复位键看日志（会断 J-Link RTT）。刷屏在 EPD 线程，main 只入队。
+刷屏在 EPD 线程；main 只入队 / 写平面。勿用复位键看日志（会断 J-Link RTT）。  
+产品翻页/切模：触摸 CAP1203（γ）。实验室仍可用 BLE `DISPLAY(2001)` 入队 demo。
 
-## BLE 冒烟（nRF Connect）
+## 面板
 
-自定义 128-bit 服务（前 32 bit = FNV-1a(NVS sn)），见 [`ble/README.md`](../../ble/README.md)。
+仅 **4.2" BWR**（WS 4.2" B V2，400×300，平面 15000）。NVS `epanel` 历史值忽略。
+
+## BLE（nRF Connect）
+
+自定义 128-bit 服务（前 32 bit = FNV-1a(NVS sn)），见 [`ble/README.md`](../../ble/README.md)。  
+平面协议细节见 [`ble/docs/display_plane_upload.md`](../../ble/docs/display_plane_upload.md)（文档示例多为 2.9；本板默认按 **4.2 / 15000** 传）。
 
 | 步骤 | 期望 |
 |------|------|
-| 扫描连接 `ink_panel`，对 TX **Enable Notify** | 串口 `ble: connected` |
-| RX Write：`E9 03 00 00`（PING 1001） | Notify ACK；串口 `app: PING ok` |
-| 保持连接约 20s | HEARTBEAT Notify；串口 `app: HEARTBEAT` |
-| 显示类 CMD（2001–2004） | ACK `STATUS_NOT_SUPPORTED`（档1 未开 EPD 上传） |
+| 扫描连接 `ink_panel`，对 TX **Enable Notify** | RTT `ble: connected` |
+| RX Write：`E9 03 00 00`（PING 1001） | Notify ACK；RTT `app: PING ok` |
+| 保持连接约 20s | HEARTBEAT Notify；RTT `app: HEARTBEAT` |
+| DISPLAY(2001) | 入队本地 demo；ACK=0 |
+| BEGIN/CHUNK/REFRESH（2002–2004） | 按 4.2" 上传；CRC 后 **写入 Flash home/0 并刷屏**（α） |
+| 刷屏中再发 PING | 仍有 ACK |
+| 刷屏中再 BEGIN/CHUNK/REFRESH | ACK `STATUS_INVALID_STATE` |
 
 **不要用** nRF Connect 的 SMP / DFU / UART 菜单测业务。
+
+### 4.2" 上传尺寸（默认）
+
+- `width=400`，`height=300`
+- 含 BW/RED 时对应 `len=15000`，CRC32 为整平面
+
+### 2.9" 上传尺寸
+
+双击切到 2.9 并复位后：
+
+- `width=128`，`height=296`，`len=4736`
+
+## W25Q 页槽（α）
+
+| 区 | 说明 |
+|----|------|
+| meta @0x0 | 4KB：magic/valid 位图 |
+| home×1 + notes×8 + info×4 | 各 32KB；空槽刷白 |
+| font_cjk @0x69000 | 2MB 预留（不读） |
+
+开机：`page_slot` 加载 **home/0** 刷屏。Host `REFRESH`：RAM 帧 → 存 home/0 → 刷屏。复位后再开机应仍见上次画面。细节见 [`tmp/ink_panel/PRODUCT.md`](../../tmp/ink_panel/PRODUCT.md)。
 
 ## 构建 / 烧录
 
@@ -55,7 +96,7 @@ EVT 自有板 bring-up。无线链路为 **BLE Peripheral**（仓库 [`ble/`](..
 .\nrf.cmd -Project ink_panel flash
 ```
 
-期望 RTT 日志：`ink_panel boot` / `ink_panel ok` / `epd: worker start` / `epd: boot demo done` 等。
+期望 RTT：`ink_panel boot` / `ink_panel ok board=...`；异常才有 `epd:` / `npm1300:` 失败行。
 
 ## 日志（J-Link RTT）
 
@@ -71,45 +112,26 @@ CONFIG_UART_CONSOLE=n
 
 ### 方式 A：仓库脚本（推荐）
 
-仓库已备启动脚本（依赖同目录下的 J-Link 工具包）：
-
 ```powershell
-# 图形界面（看 printk / demo 日志）
 .\tmp\rtt\open_rtt_viewer.cmd
-
-# 命令行把 RTT 打到当前终端
 .\tmp\rtt\open_rtt_client.cmd
 ```
 
-`tmp\rtt\jlink\` 里需有 `JLinkRTTViewer.exe` / `JLinkRTTClient.exe`（可从本机 SEGGER 安装目录拷贝，或把脚本里的 `JLINK=` 改成安装路径，例如 `C:\Program Files\SEGGER\JLink`）。
-
 ### 方式 B：本机已装 SEGGER J-Link
 
-1. 打开 **J-Link RTT Viewer**（开始菜单或安装目录下的 `JLinkRTTViewer.exe`）
-2. 连接参数大致如下：
-   - **Connection**：USB
-   - **Specify Target Device**：`nRF54L15_M33`（或列表里的 nRF54L15）
-   - **Target Interface**：SWD
-   - **Speed**：4000 kHz（可先用默认）
-3. 通道用 **Terminal 0**（Zephyr `RTT_CONSOLE` 默认 up-buffer 0）
-4. 复位或重新上电后应持续刷出 `ink_panel` / `epd:` / `npm1300` 日志
-
-命令行等价：
-
-```powershell
-& "C:\Program Files\SEGGER\JLink\JLinkRTTClient.exe"
-```
+1. 打开 **J-Link RTT Viewer**
+2. Target：`nRF54L15_M33`，SWD
+3. 通道 **Terminal 0**
 
 ### 注意
 
 | 点 | 说明 |
 |----|------|
-| 与 UART | `CONFIG_UART_CONSOLE=n`，USB‑TTL 接 UART **看不到** 这些 `printk` |
-| 与 nrfutil/west flash | 烧录占用 J-Link 时 Viewer 可能断连；烧完再连 RTT |
-| 复位键 | 冷复位会断 RTT；看日志请用 **BTN1 单击** 重刷 demo |
-| 无输出 | 查 SWD 线、供电、是否烧的是 `ink_panel`、RTT Viewer 设备名是否选对 |
-| 改回 UART 日志 | `CONFIG_RTT_CONSOLE=n` + `CONFIG_UART_CONSOLE=y` 后重编（脚见上表） |
+| 与 UART | `CONFIG_UART_CONSOLE=n`，USB‑TTL **看不到** `printk` |
+| 烧录 | 占用 J-Link 时 Viewer 可能断连；烧完再连 |
+| 复位键 | 冷复位会断 RTT；BTN1 单击用于断连/再广播 |
+| BLE | 须 `CONFIG_START_REQUEST_HFXO=y`（已开） |
 
-墨水屏：`CONFIG_INK_PANEL_EPD=y`；总线默认 **GPIO bitbang**（对齐 `eink_tag`；`CONFIG_INK_PANEL_EPD_SPIM=n`）。脚：SCK=P1.08 MOSI=P1.09 CS=P1.10 DC=P1.05 RST=P1.06 BUSY=P1.07。实验 SPIM20：`CONFIG_INK_PANEL_EPD_SPIM=y`（当前首次 `spi_write` 会 Bus Fault）。关屏：`CONFIG_INK_PANEL_EPD=n`。
+墨水屏：`CONFIG_INK_PANEL_EPD=y`；总线默认 **GPIO bitbang**（`CONFIG_INK_PANEL_EPD_SPIM=n`）。实验 SPIM20 当前首次 `spi_write` 会 Bus Fault。
 
-NFC（片内 NFCT T2T）：`CONFIG_INK_PANEL_NFC=y`。期望 RTT `nfc: bringup ok`；手机靠近见 `nfc: field on` / `data read` / `field off`；读到 Text `ink_panel NFC ok`。关改 `n`。
+NFC（片内 NFCT）：`CONFIG_INK_PANEL_NFC` 默认工程关；手机验读不在本轮。

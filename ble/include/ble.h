@@ -31,6 +31,9 @@ bool ble_is_ready(void);
 bool ble_is_advertising(void);
 bool ble_is_connected(void);
 
+/** 主动断开当前连接；无连接返回 INVALID_STATE。 */
+status_t ble_disconnect(void);
+
 /** 开始/停止可连接广播（未连接时）。 */
 status_t ble_adv_start(void);
 status_t ble_adv_stop(void);

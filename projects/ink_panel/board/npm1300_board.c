@@ -16,10 +16,7 @@
 
 #define ZUSER DT_PATH(zephyr_user)
 
-/* 与 cbb / PS 一致，板级回读与 VBUS 判定 */
-#define NPM1300_BOARD_REG_BUCK1NORMVOUT 0x0408u
-#define NPM1300_BOARD_REG_BUCKSWCTRLSEL 0x040Fu
-#define NPM1300_BOARD_REG_BUCK1VOUTST   0x0410u
+/* 与 cbb / PS 一致：VBUS 判定 */
 #define NPM1300_BOARD_REG_VBUSINSTATUS0 0x0207u
 #define NPM1300_BOARD_VBUS_DETECTED     0x01u /* VBUSINSTATUS bit0 */
 
@@ -39,7 +36,8 @@ static bool s_gpio_ready;
 static bool s_rails_cfg_ok;
 
 static struct k_work_delayable s_charge_work;
-static struct k_work_delayable s_status_work;
+/* charge 周期任务与 EPD 供电同抢 I2C → 须持 s_npm_lock */
+static K_MUTEX_DEFINE(s_npm_lock);
 
 static const struct device *npm1300_board_i2c(void)
 {
@@ -120,14 +118,16 @@ static int npm1300_board_charge_apply(bool want_on)
 
 static void npm1300_board_charge_sync(void)
 {
-	const bool want = npm1300_board_vbus_present() && !s_charge_inhibit;
+	bool want;
 
-	if (want == s_charge_applied) {
-		return;
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
+	want = npm1300_board_vbus_present() && !s_charge_inhibit;
+	if (want != s_charge_applied) {
+		if (npm1300_board_charge_apply(want) != 0) {
+			printk("npm1300 chg sync fail want=%d\n", (int)want);
+		}
 	}
-	if (npm1300_board_charge_apply(want) != 0) {
-		printk("npm1300 chg sync fail want=%d\n", (int)want);
-	}
+	k_mutex_unlock(&s_npm_lock);
 }
 
 static int npm1300_board_gpio_init(void)
@@ -190,36 +190,101 @@ static int npm1300_board_rails_config(void)
 	(void)npm1300_reg_read(&g_npm1300, 0x0809u, &ldosel); /* LDSW2LDOSEL */
 	(void)npm1300_reg_read(&g_npm1300, 0x080Du, &voutsel); /* LDSW2VOUTSEL */
 	epd_mv = (uint16_t)(1000U + ((uint16_t)voutsel * 100U));
-	printk("npm1300 EPD rail: LDOSEL=0x%02x VOUTSEL=0x%02x => %umV (want %u)\n",
-	       ldosel, voutsel, (unsigned)epd_mv, (unsigned)NPM1300_BOARD_EPD_MV);
-	if ((ldosel & 0x01u) == 0U) {
-		printk("npm1300 EPD WARN: not LDO mode (LoadSW may pass ~BUCK/VSYS)\n");
-	}
-	if (epd_mv != NPM1300_BOARD_EPD_MV) {
-		printk("npm1300 EPD WARN: vout not 3.3V\n");
+	if (((ldosel & 0x01u) == 0U) || (epd_mv != NPM1300_BOARD_EPD_MV)) {
+		printk("npm1300: EPD rail warn LDOSEL=0x%02x => %umV\n", ldosel,
+		       (unsigned)epd_mv);
 	}
 
 	return 0;
 }
 
+/** LDSWSTATUS：bit2=LoadSW2，bit3=LDO2（EPD 必须 LDO） */
+#define NPM1300_LDSW_STAT_LDO2  0x08u
+#define NPM1300_LDSW_STAT_LSW2  0x04u
+
 void npm1300_board_epd_power_set(bool on)
 {
+	npm1300_status_t st;
+	uint8_t ldsw = 0U;
+	uint8_t ldosel = 0U;
+	uint8_t voutsel = 0U;
+
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
 	if (s_gpio_ready) {
 		gpio_pin_set_dt(&s_epd_pwr, on ? 1 : 0);
 	}
-	if (s_rails_cfg_ok && g_npm1300.initialized) {
-		(void)npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW2, on);
+	if (!(s_rails_cfg_ok && g_npm1300.initialized)) {
+		k_mutex_unlock(&s_npm_lock);
+		return;
 	}
+
+	if (!on) {
+		st = npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW2, false);
+		if (st != NPM1300_OK) {
+			printk("npm1300: LDSW2 disable FAIL st=%d\n", (int)st);
+		}
+		k_mutex_unlock(&s_npm_lock);
+		return;
+	}
+
+	/*
+	 * PS：改 LDOSEL/VOUTSEL 须在 LDSW 关闭时。
+	 * 每次上电都重配，避免上次刷屏 OCP 掉电后模式回 LoadSW（~BUCK 3.0V）。
+	 */
+	(void)npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW2, false);
+	k_mutex_unlock(&s_npm_lock);
+	k_msleep(5);
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
+
+	st = npm1300_ldsw_set_mode(&g_npm1300, NPM1300_LDSW2, NPM1300_LDSW_MODE_LDO);
+	if (st == NPM1300_OK) {
+		st = npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW2, NPM1300_BOARD_EPD_MV);
+	}
+	if (st == NPM1300_OK) {
+		st = npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW2, true);
+	}
+	if (st != NPM1300_OK) {
+		printk("npm1300: LDSW2 bringup FAIL st=%d — retry\n", (int)st);
+		(void)npm1300_ldsw_set_mode(&g_npm1300, NPM1300_LDSW2, NPM1300_LDSW_MODE_LDO);
+		(void)npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW2, NPM1300_BOARD_EPD_MV);
+		st = npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW2, true);
+	}
+
+	(void)npm1300_reg_read(&g_npm1300, 0x0809u, &ldosel);
+	(void)npm1300_reg_read(&g_npm1300, 0x080Du, &voutsel);
+	(void)npm1300_ldsw_get_status(&g_npm1300, NPM1300_LDSW2, &ldsw);
+	k_mutex_unlock(&s_npm_lock);
+
+	if ((st != NPM1300_OK) || ((ldsw & NPM1300_LDSW_STAT_LDO2) == 0U) ||
+	    ((ldsw & NPM1300_LDSW_STAT_LSW2) != 0U) || ((ldosel & 0x01u) == 0U)) {
+		printk("npm1300: EPD rail warn st=%d LDOSEL=0x%02x VOUT=0x%02x ldsw=0x%02x\n",
+		       (int)st, ldosel, voutsel, ldsw);
+	}
+}
+
+bool npm1300_board_epd_rail_ok(void)
+{
+	uint8_t ldsw = 0U;
+
+	if (!(s_rails_cfg_ok && g_npm1300.initialized)) {
+		return false;
+	}
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
+	(void)npm1300_ldsw_get_status(&g_npm1300, NPM1300_LDSW2, &ldsw);
+	k_mutex_unlock(&s_npm_lock);
+	return (ldsw & NPM1300_LDSW_STAT_LDO2) != 0U;
 }
 
 void npm1300_board_touch_power_set(bool on)
 {
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
 	if (s_gpio_ready) {
 		gpio_pin_set_dt(&s_touch_ldo, on ? 1 : 0);
 	}
 	if (s_rails_cfg_ok && g_npm1300.initialized) {
 		(void)npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW1, on);
 	}
+	k_mutex_unlock(&s_npm_lock);
 }
 
 void npm1300_board_charge_inhibit_set(bool inhibit)
@@ -245,47 +310,10 @@ static void npm1300_board_charge_work_fn(struct k_work *work)
 	(void)k_work_reschedule(&s_charge_work, K_SECONDS(1));
 }
 
-static void npm1300_board_status_work_fn(struct k_work *work)
-{
-	ARG_UNUSED(work);
-	npm1300_board_log_status();
-	(void)k_work_reschedule(&s_status_work, K_SECONDS(5));
-}
-
 static void npm1300_board_workers_start(void)
 {
 	k_work_init_delayable(&s_charge_work, npm1300_board_charge_work_fn);
-	k_work_init_delayable(&s_status_work, npm1300_board_status_work_fn);
 	(void)k_work_schedule(&s_charge_work, K_SECONDS(1));
-	(void)k_work_schedule(&s_status_work, K_SECONDS(5));
-}
-
-void npm1300_board_log_status(void)
-{
-	uint8_t buck = 0U;
-	uint8_t chg = 0U;
-	uint8_t ldsw = 0U;
-	uint8_t vout = 0U;
-	uint8_t sw = 0U;
-	uint8_t vst = 0U;
-	uint8_t vbus = 0U;
-
-	if (!g_npm1300.initialized) {
-		return;
-	}
-
-	(void)npm1300_buck_get_status(&g_npm1300, NPM1300_BUCK1, &buck);
-	(void)npm1300_charger_get_status(&g_npm1300, &chg);
-	/* LDSWSTATUS 共用：bit0/1≈LDSW1，bit2/3≈LDSW2（见 nPM1300 PS） */
-	(void)npm1300_ldsw_get_status(&g_npm1300, NPM1300_LDSW2, &ldsw);
-	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_BUCK1NORMVOUT, &vout);
-	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_BUCKSWCTRLSEL, &sw);
-	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_BUCK1VOUTST, &vst);
-	(void)npm1300_reg_read(&g_npm1300, NPM1300_BOARD_REG_VBUSINSTATUS0, &vbus);
-
-	printk("npm1300 vout=0x%02x sw=0x%02x vst=0x%02x buck=0x%02x chg=0x%02x ldsw=0x%02x(LDSWSTATUS) vbus=0x%02x inh=%d applied=%d\n",
-	       vout, sw, vst, buck, chg, ldsw, vbus, (int)s_charge_inhibit,
-	       (int)s_charge_applied);
 }
 
 int npm1300_board_enter_ship(void)
@@ -297,10 +325,14 @@ int npm1300_board_enter_ship(void)
 	}
 
 	s_charge_inhibit = true;
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
 	(void)npm1300_board_charge_apply(false);
+	k_mutex_unlock(&s_npm_lock);
 	npm1300_board_epd_power_set(false);
 
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
 	st = npm1300_ship_enter(&g_npm1300);
+	k_mutex_unlock(&s_npm_lock);
 	if (st != NPM1300_OK) {
 		printk("npm1300 ship=%d\n", (int)st);
 		return -2;
@@ -353,11 +385,5 @@ int npm1300_board_bringup(void)
 
 	npm1300_board_charge_sync();
 	npm1300_board_workers_start();
-
-	printk("npm1300 ok buck1=3.0V touch=%uV epd=%uV(LDO) both=on chg=%s\n",
-	       (unsigned)(NPM1300_BOARD_TOUCH_MV / 1000U),
-	       (unsigned)(NPM1300_BOARD_EPD_MV / 1000U),
-	       s_charge_applied ? "on" : "off");
-	npm1300_board_log_status();
 	return 0;
 }

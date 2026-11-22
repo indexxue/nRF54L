@@ -13,6 +13,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/atomic.h>
 
@@ -148,6 +149,24 @@ status_t ble_gatt_init(void)
 		(void)ble_gatt_prepare();
 	}
 	LOG_INFO("ble_gatt: RX write + TX notify");
+	return STATUS_OK;
+}
+
+status_t ble_gatt_disconnect(void)
+{
+	struct bt_conn *conn = s_conn;
+	int err;
+
+	if (conn == NULL) {
+		return STATUS_INVALID_STATE;
+	}
+
+	err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	if (err != 0) {
+		LOG_WARN("ble_gatt: disconnect err=%d", err);
+		return STATUS_FAIL;
+	}
+	LOG_INFO("ble_gatt: disconnect requested");
 	return STATUS_OK;
 }
 

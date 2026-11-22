@@ -1,7 +1,9 @@
 # EPD Tag Designer (`nrf_console`)
 
-PC 端墨水屏 **DIY 设计台**（图层文字/价格/图形，多尺寸）+ **BLE 上传**到 `eink_tag`。  
+PC 端墨水屏 **DIY 设计台**（图层文字/价格/图形，多尺寸）+ **BLE 上传**到 `eink_tag` / 通用平面协议。  
 设计器来自 `tmp/epd` 浏览器工具；上传协议见 [`../../ble/docs/display_plane_upload.md`](../../ble/docs/display_plane_upload.md)。
+
+**ink_panel 联调**：请用配套 CLI [`../ink_panel_console`](../ink_panel_console)（默认 4.2" / 设备名 `ink_panel`；`designer` 子命令会桥接启动本工具）。
 
 ## 环境
 

@@ -166,7 +166,7 @@
 	status = "disabled";
 };
 
-/* 冒烟轮关掉 NFCT；开 NFC 时再 okay */
+/* NFCT 默认关；开 NFC 时再 okay */
 &nfct {
 	status = "disabled";
 };

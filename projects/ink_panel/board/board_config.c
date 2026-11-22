@@ -30,8 +30,8 @@ static const board_button_spec_t s_buttons[] = {
 };
 
 static const board_config_t s_board = {
-	.name = "ink_panel_evt_smoke",
-	.mask = BOARD_MASK_LED | BOARD_MASK_BUTTON,
+	.name = "ink_panel",
+	.mask = BOARD_MASK_LED | BOARD_MASK_BUTTON | BOARD_MASK_BLE,
 
 	.leds = s_leds,
 	.led_count = (uint8_t)ARRAY_SIZE(s_leds),

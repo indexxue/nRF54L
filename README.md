@@ -12,7 +12,7 @@
 
 ## 特性
 
-- 多工程布局：`projects/demo`（模板）、`projects/eink_tag`（NFC/BLE→墨水屏标签）、`projects/factory`（厂测骨架）、`projects/zigbee_ed`（Zigbee ED，原 `zigbee_demo`）、`projects/zigbee_router`（Zigbee Router + 控灯）、`projects/ink_panel`（EVT 墨水屏终端 · BLE）
+- 多工程布局：`projects/demo`（模板）、`projects/eink_tag`（NFC/BLE→墨水屏标签）、`projects/factory`（厂测骨架）、`projects/zigbee_ed`（Zigbee ED，原 `zigbee_demo`）、`projects/zigbee_router`（Zigbee Router + 控灯）、`projects/ink_panel`（EVT 墨水屏终端 · BLE；[`终态`](tmp/ink_panel/product.html) / [`阶段`](tmp/ink_panel/stage.html)）
 - 共享起机：`start/`（`main` / `start_boot` / `start_poll`）；工程只写 `app_init` / `app_run`
 - 共享模块：`log` / `nvs` / `device_profile` / `board`（结构体+掩码）/ `led_scene` / `event` / `crc32` / `flexible_button` / `fw_version`
 - 分区规划已锁定：MCUBoot 双槽 + storage（见 [`doc/flash_layout.md`](doc/flash_layout.md)）

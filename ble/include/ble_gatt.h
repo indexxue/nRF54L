@@ -24,6 +24,9 @@ status_t ble_gatt_prepare(void);
 
 status_t ble_gatt_init(void);
 
+/** 主动断开当前连接（无连接返回 INVALID_STATE）。 */
+status_t ble_gatt_disconnect(void);
+
 /** Notify raw CMD frame on TX characteristic (needs link + CCC notify). */
 status_t ble_gatt_notify(const void *data, size_t len);
 

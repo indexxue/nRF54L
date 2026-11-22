@@ -1,11 +1,11 @@
 # ink_panel board feature options (sourced beside CMakeLists.txt).
 
 config INK_PANEL_EPD
-	bool "Enable e-ink panel (smoke bringup)"
+	bool "Enable e-ink panel"
 	default y
 	help
 	  When disabled, epd_board / cbb/epd are not built and app skips
-	  EPD smoke/refresh. Use prj.conf CONFIG_INK_PANEL_EPD=n to gate off.
+	  EPD refresh. Use prj.conf CONFIG_INK_PANEL_EPD=n to gate off.
 
 config INK_PANEL_EPD_SPIM
 	bool "EPD bus via SPIM20 (vs GPIO bitbang)"
@@ -18,21 +18,20 @@ config INK_PANEL_EPD_SPIM
 	  n: GPIO bitbang（与 eink_tag EPD_USE_BITBANG=1 同路径）。
 
 config INK_PANEL_NFC
-	bool "Enable on-chip NFCT Type 2 Tag smoke"
+	bool "Enable on-chip NFCT Type 2 Tag"
 	default y
 	help
 	  When enabled, builds nfc_board and starts T2T emulation with a fixed
-	  NDEF Text payload for EVT field/read smoke. Use prj.conf
-	  CONFIG_INK_PANEL_NFC=n to gate off.
+	  NDEF Text payload. Use prj.conf CONFIG_INK_PANEL_NFC=n to gate off.
 
 config INK_PANEL_W25Q
-	bool "Enable W25Q64 external SPI NOR smoke (SPIM00)"
+	bool "Enable W25Q64 external SPI NOR (SPIM00)"
 	select SPI
 	default y
 	help
-	  When enabled, builds w25q_board + cbb/w25q and runs JEDEC probe after
-	  nPM1300 bringup. Pins: SCK=P2.06 MOSI=P2.08 MISO=P2.09 CS=P2.10
-	  WP=P2.05 HOLD=P2.04. Uses spi00 (SERIAL00; disables uart00; RTT log).
+	  When enabled, builds w25q_board + cbb/w25q for page slots.
+	  Pins: SCK=P2.06 MOSI=P2.08 MISO=P2.09 CS=P2.10 WP=P2.05 HOLD=P2.04.
+	  Uses spi00 (SERIAL00; disables uart00; RTT log).
 
 menu "Zephyr Kernel"
 source "Kconfig.zephyr"

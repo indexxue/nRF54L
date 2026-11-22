@@ -1,0 +1,6 @@
+# GUI + BLE（推荐复用 ..\nrf_console\.venv）
+bleak>=0.22.0
+customtkinter>=5.2.0
+Pillow>=10.0.0
+# 「打开 DIY 设计器」另需 nrf_console 侧：
+# pywebview>=5.0

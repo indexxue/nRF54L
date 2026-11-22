@@ -14,11 +14,8 @@ extern "C" {
 
 extern w25q_t g_w25q;
 
-/**
- * @brief Phase 1 冒烟：GPIO + SPIM22 + w25q_init，RTT 打印 JEDEC/size。
- * @return 0 成功，负值失败（不阻断后续 EPD）
- */
-int w25q_board_smoke(void);
+/** GPIO + SPIM00 + w25q_init；成功返回 0 */
+int w25q_board_init(void);
 
 #ifdef __cplusplus
 }

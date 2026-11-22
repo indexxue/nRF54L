@@ -1,6 +1,6 @@
 /**
  * @file nfc_board.h
- * @brief ink_panel：片内 NFCT Type 2 Tag 产测冒烟
+ * @brief ink_panel：片内 NFCT Type 2 Tag 产测
  */
 
 #ifndef INK_PANEL_NFC_BOARD_H

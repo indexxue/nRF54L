@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.20.0)
 list(APPEND EXTRA_ZEPHYR_MODULES
   ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_common
   ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_start
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../modules/nrf54_ble
 )
 
 set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_SOURCE_DIR}/board/app.overlay)
@@ -37,6 +38,7 @@ endif()
 if(CONFIG_INK_PANEL_W25Q)
   target_sources(app PRIVATE
     board/w25q_board.c
+    board/page_slot.c
     ${CBB_W25Q_DIR}/w25q.c
   )
 endif()

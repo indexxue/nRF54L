@@ -2,7 +2,7 @@
  * @file w25q_board.c
  * @brief ink_panel：W25Q64 — SPIM00 + 软件 CS；回调注入 cbb/w25q
  *
- * Phase 1：仅 JEDEC 探测。禁止在 ISR/GATT 回调中调用。
+ * 禁止在 ISR/GATT 回调中调用。
  */
 
 #include "w25q_board.h"
@@ -38,7 +38,6 @@ static const struct gpio_dt_spec s_hold =
 static struct spi_config s_spi_cfg;
 static uint8_t s_tx_chunk[W25Q_SPI_CHUNK];
 static uint8_t s_rx_chunk[W25Q_SPI_CHUNK];
-static bool s_spi_first_done;
 static uint32_t s_spi_err_count;
 
 static void w25q_board_set_cs(uint8_t level)
@@ -90,11 +89,6 @@ static int w25q_board_spi_xfer(const uint8_t *tx, uint8_t *rx, uint16_t len)
 		tx_buf.buf = s_tx_chunk;
 		tx_buf.len = n;
 
-		if (!s_spi_first_done) {
-			printk("w25q: first spi xfer len=%u @%uHz rx=%d\n",
-			       (unsigned)n, (unsigned)W25Q_SPI_HZ, rx != NULL);
-		}
-
 		if (rx != NULL) {
 			rx_buf.buf = s_rx_chunk;
 			rx_buf.len = n;
@@ -106,14 +100,10 @@ static int w25q_board_spi_xfer(const uint8_t *tx, uint8_t *rx, uint16_t len)
 			err = spi_write(s_spi, &s_spi_cfg, &tx_set);
 		}
 
-		if (!s_spi_first_done) {
-			s_spi_first_done = true;
-			printk("w25q: first spi xfer done err=%d\n", err);
-		}
 		if (err != 0) {
 			s_spi_err_count++;
-			if (s_spi_err_count <= 5U) {
-				printk("w25q: spi err=%d len=%u\n", err, (unsigned)n);
+			if (s_spi_err_count <= 3U) {
+				printk("w25q: spi err=%d\n", err);
 			}
 			return -1;
 		}
@@ -149,7 +139,7 @@ static int w25q_board_gpio_init(void)
 	return 0;
 }
 
-int w25q_board_smoke(void)
+int w25q_board_init(void)
 {
 	w25q_config_t cfg = {
 		.spi_xfer = w25q_board_spi_xfer,
@@ -160,7 +150,6 @@ int w25q_board_smoke(void)
 		.skip_id_check = false,
 	};
 	w25q_status_t st;
-	uint8_t id[3];
 
 	if (!device_is_ready(s_spi)) {
 		printk("w25q: spi00 not ready\n");
@@ -176,20 +165,13 @@ int w25q_board_smoke(void)
 	s_spi_cfg.slave = 0;
 	s_spi_cfg.cs.gpio.port = NULL;
 
-	/* BUCK1 刚抬到 3.0 V：给 NOR 一点稳定时间 */
 	k_msleep(2);
 
 	st = w25q_init(&g_w25q, &cfg);
 	if (st != W25Q_OK) {
-		printk("w25q: init=%d (expect JEDEC EF 40 17)\n", (int)st);
-		if (w25q_read_jedec_id(&g_w25q, id) == W25Q_OK) {
-			printk("w25q: raw JEDEC=%02X %02X %02X\n", id[0], id[1], id[2]);
-		}
+		printk("w25q: init fail st=%d\n", (int)st);
 		return -1;
 	}
 
-	printk("w25q: JEDEC=%02X %02X %02X size=%u SPIM00 SCK=P2.06 MOSI=P2.08 MISO=P2.09 CS=P2.10\n",
-	       g_w25q.jedec[0], g_w25q.jedec[1], g_w25q.jedec[2],
-	       (unsigned)w25q_get_size(&g_w25q));
 	return 0;
 }

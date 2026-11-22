@@ -19,17 +19,20 @@ extern npm1300_t g_npm1300;
 /** probe + BUCK1=3.0V + 轨默认 + 按 VBUS 配充；成功返回 0 */
 int npm1300_board_bringup(void);
 
-/** 读状态并打一行短日志（失败静默） */
-void npm1300_board_log_status(void);
-
 /** 1 s 级调用：按 VBUS / inhibit 边沿开闭充电 */
 void npm1300_board_poll_charge(void);
 
 /** RAM 禁止充电；true 时即使有 VBUS 也不开充 */
 void npm1300_board_charge_inhibit_set(bool inhibit);
 
-/** EPD_PWR_EN → LS2；刷屏窗口开 */
+/**
+ * EPD 轨（LDSW2）：on 时先关再写 LDO@3.3V 再开（LDOSEL 须在关态改）。
+ * 刷屏前务必再调一次，避免上次 OCP/掉电后仍以为有电。
+ */
 void npm1300_board_epd_power_set(bool on);
+
+/** LDSWSTATUS bit3=LDO2；刷屏前/后验轨用 */
+bool npm1300_board_epd_rail_ok(void);
 
 /** TOUCH_LDO_EN → LDO1；产品常开 */
 void npm1300_board_touch_power_set(bool on);

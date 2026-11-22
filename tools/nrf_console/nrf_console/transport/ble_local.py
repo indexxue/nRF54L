@@ -59,6 +59,12 @@ class BleLocalTransport(Transport):
         self._radio_lock = asyncio.Lock()
         # Prefer BLEDevice from last scan; address-only reconnect is flaky on Windows.
         self._ble_devices: dict[str, BLEDevice] = {}
+        # Remote disconnect nulls _client without Close — keep orphans to flush before scan.
+        self._orphan_clients: list[BleakClient] = []
+        # Last resolved GATT UUIDs (SN-derived); host may persist into config.
+        self.last_svc_uuid: str = ""
+        self.last_rx_uuid: str = ""
+        self.last_tx_uuid: str = ""
 
     async def scan(
         self,
@@ -75,6 +81,7 @@ class BleLocalTransport(Transport):
             if self._client is not None:
                 await self._dispose_client(settle_s=_SCAN_SETTLE_AFTER_DISC_S)
             else:
+                await self._flush_orphan_clients(settle_s=0.5)
                 # Radio may still be settling after a prior scan/connect.
                 await asyncio.sleep(0.2)
 
@@ -212,6 +219,8 @@ class BleLocalTransport(Transport):
             # Always tear down any prior client (including half-dead after link loss).
             if self._client is not None:
                 await self._dispose_client(settle_s=0.5)
+            else:
+                await self._flush_orphan_clients(settle_s=0.5)
 
             self._rx_uuid = rx_uuid
             self._tx_uuid = tx_uuid
@@ -256,28 +265,19 @@ class BleLocalTransport(Transport):
             assert client is not None
             self._client = client
 
-            # Prefer configured UUIDs; else discover SN-derived …-000N-1000-8000-00805f9b34fb.
-            resolved_svc = svc_uuid
-            resolved_rx = rx_uuid
-            resolved_tx = tx_uuid
             try:
-                svc = client.services.get_service(svc_uuid)
-                if svc is None:
-                    found = _discover_sn_uuids(client)
-                    if found is None:
-                        await self._dispose_client(settle_s=0.3)
-                        raise TransportError(f"service not found: {svc_uuid}")
-                    resolved_svc, resolved_rx, resolved_tx = found
+                resolved_svc, resolved_rx, resolved_tx = await self._resolve_uuids(
+                    client, svc_uuid, rx_uuid, tx_uuid
+                )
             except TransportError:
+                await self._dispose_client(settle_s=0.3)
                 raise
-            except Exception:
-                found = _discover_sn_uuids(client)
-                if found is not None:
-                    resolved_svc, resolved_rx, resolved_tx = found
 
             self._rx_uuid = resolved_rx
             self._tx_uuid = resolved_tx
-            _ = resolved_svc
+            self.last_svc_uuid = resolved_svc
+            self.last_rx_uuid = resolved_rx
+            self.last_tx_uuid = resolved_tx
 
             if auto_notify and on_notify is not None:
                 try:
@@ -294,6 +294,47 @@ class BleLocalTransport(Transport):
                 self._on_disconnect = None
                 raise TransportError("link lost during connect setup")
 
+    async def _resolve_uuids(
+        self,
+        client: BleakClient,
+        svc_uuid: str,
+        rx_uuid: str,
+        tx_uuid: str,
+    ) -> tuple[str, str, str]:
+        """SN 派生 UUID 优先；配置的 53530120 默认仅作回退（ink_panel 台台不同）。"""
+        # Bleak 3 / WinRT：连上后服务枚举可能略晚
+        for _ in range(8):
+            found = _discover_sn_uuids(client)
+            if found is not None:
+                return found
+            await asyncio.sleep(0.15)
+
+        cfg = (svc_uuid or "").strip()
+        if cfg:
+            try:
+                svc = client.services.get_service(cfg)
+            except Exception:  # noqa: BLE001
+                svc = None
+            if svc is not None:
+                return cfg, rx_uuid, tx_uuid
+
+        raise TransportError(
+            "service not found: SN-derived …-0001-1000-8000-00805f9b34fb missing; "
+            f"config was {svc_uuid or '(empty)'}"
+        )
+
+    async def _flush_orphan_clients(self, *, settle_s: float = 0.4) -> None:
+        """Close clients left by remote disconnect (WinRT needs Close before scan)."""
+        orphans = self._orphan_clients
+        self._orphan_clients = []
+        for client in orphans:
+            try:
+                await client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+        if orphans and settle_s > 0:
+            await asyncio.sleep(settle_s)
+
     def _notify_handler(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         handler = self._on_notify
         if handler is None:
@@ -307,6 +348,8 @@ class BleLocalTransport(Transport):
         if self._client is client:
             self._client = None
             self._max_wor = _DEFAULT_WOR
+            # Must Close later — otherwise Windows scan returns 0 devices.
+            self._orphan_clients.append(client)
         handler = self._on_disconnect
         if handler is None:
             return

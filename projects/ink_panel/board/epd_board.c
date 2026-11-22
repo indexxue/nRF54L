@@ -18,6 +18,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/util.h>
+
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+#include "page_slot.h"
+#endif
 
 #include <hal/nrf_spim.h>
 
@@ -26,16 +31,27 @@
 
 #define ZUSER DT_PATH(zephyr_user)
 
-/** 0=GDEY029Z95 2.9"（与 eink_tag 默认冒烟一致）；1=WS 4.2" B V2 */
-#ifndef INK_PANEL_EPD_USE_4IN2
-#define INK_PANEL_EPD_USE_4IN2 1
-#endif
-
+/** 缓冲按最大面板（4.2" 400×300 / 8 = 15000）；active plane 随 NVS 选屏 */
 #define EPD_PLANE_CAPACITY  15000U
-#define EPD_PWR_SETTLE_MS   50U
+#define EPD_PWR_SETTLE_MS   80U
+#define EPD_PWR_OFF_MS      100U
 #define EPD_BUSY_PROBE_MS   2000U
 #define EPD_FRAME_SETTLE_MS 10000U /* BUSY 不可用时，对齐 eink_tag */
-#define EPD_JOB_DEMO        1U
+/* 4.2" BWR 全刷通常 >12s；仅写 RAM+假 BUSY 约 1–3s */
+#define EPD_REFRESH_MIN_MS  5000U
+/** Auto：无红快路径累计 N 次后强制全刷清残影 */
+#define EPD_FULL_EVERY_N    8U
+#define EPD_JOB_DEMO           1U
+#define EPD_JOB_HOST           2U
+#define EPD_JOB_SHOW_SLOT      3U
+#define EPD_JOB_STORE_REFRESH  4U
+
+typedef struct {
+	uint8_t type;
+	uint8_t mode;
+	uint8_t page;
+	uint8_t reserved;
+} epd_job_t;
 /*
  * SPIM20 core=16 MHz；用 8 MHz → PRESCALER=2。
  * Mode0 且 PRESCALER>2 时 nrfx 会写 SPIM+0xC84（errata 8），
@@ -44,17 +60,12 @@
 #define EPD_SPI_HZ          8000000U
 #define EPD_SPI_CHUNK       64U
 
-#if INK_PANEL_EPD_USE_4IN2
-static const epd_panel_info_t *const s_panel = &epd_panel_ws_4in2b_v2;
-static const char *const s_size_label = "4.2in EVT BWR";
-#else
-static const epd_panel_info_t *const s_panel = &epd_panel_gdey029z95;
-static const char *const s_size_label = "2.9in EVT BWR";
-#endif
-
 /** 屏上标题：与 eink_tag 的 "eink_tag" 一眼可区分 */
 static const char *const s_demo_title = "INK_PANEL EVT";
 
+static const epd_panel_info_t *s_panel;
+static uint8_t s_size = EPD_BOARD_SIZE_4IN2;
+static uint32_t s_plane_size = EPD_PLANE_CAPACITY;
 #if !IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM)
 static const struct gpio_dt_spec s_sck = GPIO_DT_SPEC_GET(ZUSER, epd_sck_gpios);
 static const struct gpio_dt_spec s_mosi = GPIO_DT_SPEC_GET(ZUSER, epd_mosi_gpios);
@@ -69,7 +80,6 @@ static const struct device *const s_spi = DEVICE_DT_GET(DT_NODELABEL(spi20));
 static struct spi_config s_spi_cfg;
 static uint32_t s_spi_err_count;
 static uint8_t s_spi_chunk[EPD_SPI_CHUNK];
-static bool s_spi_first_done;
 #endif
 
 static uint8_t s_bw[EPD_PLANE_CAPACITY];
@@ -77,12 +87,53 @@ static uint8_t s_red[EPD_PLANE_CAPACITY];
 static epd_display_t s_disp;
 static bool s_ready;
 static bool s_busy_usable;
-static atomic_t s_refreshing;
+static bool s_panel_asleep;    /* 上次 epd_sleep 后须再 init */
+static uint32_t s_fast_since_full;
+static atomic_t s_plane_lock;  /* 主机平面：CHUNK / 推显存 */
+static atomic_t s_panel_busy;  /* 面板物理全刷 / sleep */
 
 K_THREAD_STACK_DEFINE(s_epd_stack, 4096);
 static struct k_thread s_epd_thread;
-static bool s_smoke_started;
-K_MSGQ_DEFINE(s_epd_jobs, sizeof(uint8_t), 1, 1);
+static bool s_worker_started;
+K_MSGQ_DEFINE(s_epd_jobs, sizeof(epd_job_t), 2, 4);
+
+static const epd_panel_info_t *epd_board_pick_panel(uint8_t size)
+{
+	if (size == EPD_BOARD_SIZE_4IN2) {
+		return &epd_panel_ws_4in2b_v2;
+	}
+	return &epd_panel_gdey029z95;
+}
+
+static status_t epd_board_guard_writable(void)
+{
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+	if (atomic_get(&s_plane_lock) != 0) {
+		return STATUS_INVALID_STATE;
+	}
+	return STATUS_OK;
+}
+
+static status_t epd_board_queue_job(const epd_job_t *job)
+{
+	if (!s_ready) {
+		printk("epd: queue job rejected - not ready\n");
+		return STATUS_INVALID_STATE;
+	}
+	if (job == NULL) {
+		return STATUS_INVALID_ARG;
+	}
+	/* 不在入队时占 plane_lock：否则第二张排队会堵住下一张 BEGIN。
+	 * 缓冲冻结靠「msgq 非空 / plane_lock」；worker 取到 job 再加锁。
+	 */
+	if (k_msgq_put(&s_epd_jobs, job, K_NO_WAIT) != 0) {
+		printk("epd: queue full type=%u\n", (unsigned)job->type);
+		return STATUS_FAIL;
+	}
+	return STATUS_OK;
+}
 
 #if !IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM)
 /* --- bitbang 回退：与 eink_tag 相同时序（2µs） --- */
@@ -112,7 +163,6 @@ static status_t epd_release_spim_pins(void)
 	spim->PSEL.SCK = 0xFFFFFFFFu;
 	spim->PSEL.MOSI = 0xFFFFFFFFu;
 	spim->PSEL.MISO = 0xFFFFFFFFu;
-	printk("epd: SPIM20 pins disconnected for bitbang\n");
 	return STATUS_OK;
 }
 #endif
@@ -144,19 +194,11 @@ static void epd_spi_tx(const uint8_t *data, uint16_t len)
 			buf.buf = s_spi_chunk;
 			buf.len = n;
 
-			if (!s_spi_first_done) {
-				printk("epd: first spi_write len=%u @%uHz\n", (unsigned)n,
-				       (unsigned)EPD_SPI_HZ);
-			}
 			err = spi_write(s_spi, &s_spi_cfg, &tx);
-			if (!s_spi_first_done) {
-				s_spi_first_done = true;
-				printk("epd: first spi_write done err=%d\n", err);
-			}
 			if (err != 0) {
 				s_spi_err_count++;
-				if (s_spi_err_count <= 5U) {
-					printk("epd: spi_write len=%u err=%d\n", (unsigned)n, err);
+				if (s_spi_err_count <= 3U) {
+					printk("epd: spi err=%d\n", err);
 				}
 				return;
 			}
@@ -201,14 +243,14 @@ static void epd_delay_ms(uint32_t ms)
 
 static void epd_power_on(void)
 {
+	/* 只开 EPD 轨；触摸在刷屏窗口保持关，避免与 LDO2 抢 50mA 额度 */
 	npm1300_board_epd_power_set(true);
-	npm1300_board_touch_power_set(true);
 	k_msleep(EPD_PWR_SETTLE_MS);
 }
 
 static void epd_power_off(void)
 {
-	/* 冒烟阶段保持常供，对齐“常电刷屏” */
+	/* 驱动回调：面板 deep-sleep 后不关轨；硬关只走 prepare 电源循环 */
 }
 
 /** BUSY 卡住或超时后：改固定延时，避免一直 BUSY_TIMEOUT 只剩白屏 */
@@ -223,49 +265,95 @@ static void epd_busy_fallback_fixed(void)
 	       (unsigned)EPD_FRAME_SETTLE_MS);
 }
 
+static bool epd_red_plane_active(void)
+{
+	uint32_t i;
+
+	for (i = 0U; i < s_plane_size; i++) {
+		if (s_red[i] != 0U) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Auto：有红或累计快路径次数到顶 → 全刷路径（硬上电+init） */
+static bool epd_want_full_prepare(void)
+{
+	if (epd_red_plane_active()) {
+		return true;
+	}
+	if (s_fast_since_full >= EPD_FULL_EVERY_N) {
+		return true;
+	}
+	return false;
+}
+
 /**
- * 刷屏前：强制 EPD 轨上电；BUSY 已高则复位；仍高则放弃读 BUSY。
+ * 刷屏前准备。force_rail：硬电源循环（全刷/异常）。
+ * 快路径：轨已好且未深睡 → 跳过 power-cycle/init，收完包后尽快 kick。
  */
-static void epd_job_prepare(void)
+static void epd_job_prepare(bool force_rail)
 {
 	uint32_t waited = 0U;
+	epd_status_t ist;
+	int rail_try;
+	bool rail_ok;
+	bool need_init;
 
-	epd_power_on();
-	printk("epd: prepare busy_raw=%d usable=%d\n", epd_busy(), s_busy_usable ? 1 : 0);
-	npm1300_board_log_status();
+	npm1300_board_charge_inhibit_set(true);
 
-	if (!s_busy_usable) {
-		/* 固定延时模式：每次刷前复位控制器，避免上次超时半残 */
-		(void)epd_init(&s_disp.epd);
-		return;
-	}
-	if (epd_busy() == 0) {
-		return;
-	}
+	rail_ok = npm1300_board_epd_rail_ok();
+	need_init = s_panel_asleep || !epd_is_initialized(&s_disp.epd);
 
-	printk("epd: BUSY stuck HIGH — rst + wait\n");
-	epd_rst(0);
-	k_msleep(10);
-	epd_rst(1);
-	k_msleep(20);
-	while ((epd_busy() != 0) && (waited < EPD_BUSY_PROBE_MS)) {
-		k_msleep(50);
-		waited += 50U;
-	}
-	if (epd_busy() != 0) {
-		/* 掉电重开一轮，再不行就固定延时 */
+	if (force_rail || !rail_ok) {
 		npm1300_board_epd_power_set(false);
-		k_msleep(100);
+		k_msleep(EPD_PWR_OFF_MS);
+		for (rail_try = 0; rail_try < 2; rail_try++) {
+			epd_power_on();
+			if (npm1300_board_epd_rail_ok()) {
+				break;
+			}
+			npm1300_board_epd_power_set(false);
+			k_msleep(EPD_PWR_OFF_MS);
+		}
+		need_init = true;
+	} else {
 		epd_power_on();
+	}
+
+	if (s_busy_usable && (epd_busy() != 0)) {
 		epd_rst(0);
 		k_msleep(10);
 		epd_rst(1);
-		k_msleep(50);
+		k_msleep(20);
+		while ((epd_busy() != 0) && (waited < EPD_BUSY_PROBE_MS)) {
+			k_msleep(50);
+			waited += 50U;
+		}
 		if (epd_busy() != 0) {
-			epd_busy_fallback_fixed();
+			npm1300_board_epd_power_set(false);
+			k_msleep(EPD_PWR_OFF_MS);
+			epd_power_on();
+			epd_rst(0);
+			k_msleep(10);
+			epd_rst(1);
+			k_msleep(50);
+			need_init = true;
+			if (epd_busy() != 0) {
+				epd_busy_fallback_fixed();
+			}
 		}
 	}
-	(void)epd_init(&s_disp.epd);
+
+	if (need_init) {
+		ist = epd_init(&s_disp.epd);
+		s_panel_asleep = false;
+		if (ist != EPD_OK) {
+			printk("epd: init fail st=%d\n", (int)ist);
+		}
+		k_msleep(20);
+	}
 }
 
 static status_t epd_gpio_init(void)
@@ -312,12 +400,6 @@ static status_t epd_gpio_init(void)
 	}
 	epd_cs(1);
 	epd_rst(1);
-#if IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM)
-	printk("epd: SPIM20 SCK=P1.08 MOSI=P1.09 CS=P1.10 @%uHz ready\n",
-	       (unsigned)EPD_SPI_HZ);
-#else
-	printk("epd: bitbang SCK/MOSI/CS/DC/RST/BUSY ready\n");
-#endif
 	return STATUS_OK;
 }
 
@@ -328,18 +410,11 @@ static status_t epd_gpio_init(void)
 static bool epd_busy_probe(void)
 {
 	uint32_t waited = 0U;
-	int raw_before;
-	int raw_after;
-
-	raw_before = epd_busy();
-	printk("epd: BUSY raw=%d before rst (1=high)\n", raw_before);
 
 	epd_rst(0);
 	k_msleep(10);
 	epd_rst(1);
 	k_msleep(20);
-	raw_after = epd_busy();
-	printk("epd: BUSY raw=%d after rst\n", raw_after);
 
 	while ((epd_busy() != 0) && (waited < EPD_BUSY_PROBE_MS)) {
 		k_msleep(50);
@@ -347,35 +422,37 @@ static bool epd_busy_probe(void)
 	}
 
 	if (epd_busy() != 0) {
-		printk("epd: BUSY stuck HIGH %ums — disable read_busy, use fixed wait\n",
-		       (unsigned)waited);
+		printk("epd: BUSY unusable — fixed wait\n");
 		return false;
 	}
-
-	printk("epd: BUSY idle ok waited=%ums (usable)\n", (unsigned)waited);
 	return true;
-}
-
-status_t epd_board_hw_scan(void)
-{
-	/* 保留符号：现与 bringup 合并，直接 OK（真正探测在 bringup） */
-	return STATUS_OK;
 }
 
 status_t epd_board_bringup(void)
 {
 	epd_display_config_t cfg;
 	epd_display_status_t st;
+	uint32_t plane;
 
 	s_ready = false;
-	printk("epd bringup (%s)...\n",
-	       IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM) ? "SPIM20" : "bitbang");
+
+	/* 产品仅 4.2"；忽略历史 NVS 2.9 值 */
+	s_size = EPD_BOARD_SIZE_4IN2;
+	s_panel = epd_board_pick_panel(s_size);
+	plane = epd_panel_plane_size(s_panel);
+	if ((plane == 0U) || (plane > EPD_PLANE_CAPACITY)) {
+		printk("epd: bad plane size %u for %s\n", (unsigned)plane,
+		       (s_panel != NULL) ? s_panel->name : "?");
+		return STATUS_FAIL;
+	}
+	s_plane_size = plane;
 
 	if (epd_gpio_init() != STATUS_OK) {
 		return STATUS_FAIL;
 	}
 
 	epd_power_on();
+	npm1300_board_touch_power_set(true);
 	epd_cs(1);
 	s_busy_usable = epd_busy_probe();
 
@@ -404,12 +481,6 @@ status_t epd_board_bringup(void)
 	}
 
 	s_ready = true;
-	printk("epd: ready panel=%s %ux%u path=%s bw_invert=0 busy_ok=%d settle=%ums\n",
-	       s_panel->name, (unsigned)epd_display_width(&s_disp),
-	       (unsigned)epd_display_height(&s_disp),
-	       IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM) ? "spim20" : "bitbang",
-	       s_busy_usable ? 1 : 0,
-	       (unsigned)(s_busy_usable ? 0U : EPD_FRAME_SETTLE_MS));
 	return STATUS_OK;
 }
 
@@ -418,9 +489,21 @@ bool epd_board_is_ready(void)
 	return s_ready && epd_display_is_ready(&s_disp);
 }
 
+bool epd_board_planes_busy(void)
+{
+	/* 推显存中，或已有 job 排队占用当前平面内容 */
+	return (atomic_get(&s_plane_lock) != 0) ||
+	       (k_msgq_num_used_get(&s_epd_jobs) > 0);
+}
+
+bool epd_board_panel_busy(void)
+{
+	return atomic_get(&s_panel_busy) != 0;
+}
+
 bool epd_board_is_busy(void)
 {
-	return atomic_get(&s_refreshing) != 0;
+	return epd_board_planes_busy() || epd_board_panel_busy();
 }
 
 /** 对齐 eink_tag epd_refresh_step */
@@ -443,14 +526,9 @@ static status_t epd_refresh_step(const char *name, epd_display_status_t (*fn)(ep
 	}
 	dt = k_uptime_get() - t0;
 
-	printk("epd: %s st=%d(%s) dt=%lldms busy_ok=%d\n", name, (int)st,
-	       (st == EPD_DISPLAY_OK)               ? "ok"
-	       : (st == EPD_DISPLAY_ERROR_BUSY)     ? "BUSY_TIMEOUT"
-	       : (st == EPD_DISPLAY_ERROR_PARAM)    ? "PARAM"
-	       : (st == EPD_DISPLAY_ERROR_NOT_INIT) ? "NOT_INIT"
-						    : "ERR",
-	       (long long)dt, s_busy_usable ? 1 : 0);
-
+	if (st != EPD_DISPLAY_OK) {
+		printk("epd: %s fail st=%d dt=%lldms\n", name, (int)st, (long long)dt);
+	}
 	return (st == EPD_DISPLAY_OK) ? STATUS_OK : STATUS_FAIL;
 }
 
@@ -462,108 +540,397 @@ status_t epd_board_test_run(void)
 		return STATUS_INVALID_STATE;
 	}
 
-	if (atomic_get(&s_refreshing) == 0) {
-		if (atomic_cas(&s_refreshing, 0, 1) == false) {
-			printk("epd: demo skipped (refresh busy)\n");
+	if (atomic_get(&s_plane_lock) == 0) {
+		if (atomic_cas(&s_plane_lock, 0, 1) == false) {
 			return STATUS_INVALID_STATE;
 		}
 	}
+	atomic_set(&s_panel_busy, 1);
 
-	epd_job_prepare();
-
-	/* 与 eink_tag 相同：先硬件擦白，再 BWR demo（文案区分产品） */
-	printk("epd: erase screen before demo\n");
+	epd_job_prepare(true);
 	st = epd_refresh_step("erase", epd_display_clear_screen, EPD_COLOR_WHITE);
 	if (st != STATUS_OK) {
-		printk("epd: erase failed — fallback BUSY + still try demo\n");
 		epd_busy_fallback_fixed();
-		epd_job_prepare();
+		epd_job_prepare(true);
 	}
 
-	printk("epd: draw BWR demo title=%s path=%s\n", s_demo_title,
-	       IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM) ? "spim20" : "bitbang");
-	epd_display_demo_bwr_fill(&s_disp, s_demo_title, s_size_label, s_panel->name);
-
-	/* 盖掉库内共用的 "Hello nRF54L15!"，换成本板标识 */
+	epd_display_demo_bwr_fill(&s_disp, s_demo_title,
+				  (s_size == EPD_BOARD_SIZE_4IN2) ? "4.2in" : "2.9in",
+				  (s_panel != NULL) ? s_panel->name : "EPD");
 	epd_display_fill_rect(&s_disp, 0U, 44U, (uint16_t)(epd_display_width(&s_disp) - 1U), 67U,
 			      EPD_COLOR_WHITE);
-	epd_display_draw_string(&s_disp, 4U, 48U,
-				IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM) ? "ink_panel SPIM20"
-								      : "ink_panel !=eink_tag",
-				EPD_FONT_16, EPD_COLOR_BLACK);
+	epd_display_draw_string(&s_disp, 4U, 48U, "ink_panel", EPD_FONT_16, EPD_COLOR_BLACK);
 
 	st = epd_refresh_step("demo", epd_display_refresh, EPD_COLOR_WHITE);
 	if (st != STATUS_OK) {
-		printk("epd: demo refresh failed — one more try after BUSY fallback\n");
 		epd_busy_fallback_fixed();
-		epd_job_prepare();
+		epd_job_prepare(true);
 		st = epd_refresh_step("demo_retry", epd_display_refresh, EPD_COLOR_WHITE);
 	}
-	atomic_set(&s_refreshing, 0);
-	if (st != STATUS_OK) {
-		return st;
-	}
-
-	printk("epd: demo done — expect INK_PANEL EVT + B/R/W bands + != eink_tag\n");
-	return STATUS_OK;
-}
-
-status_t epd_board_erase_run(void)
-{
-	/* 兼容旧 API：单独擦白 */
-	status_t st;
-
-	if (!s_ready) {
-		return STATUS_INVALID_STATE;
-	}
-	if (atomic_get(&s_refreshing) == 0) {
-		if (atomic_cas(&s_refreshing, 0, 1) == false) {
-			return STATUS_INVALID_STATE;
-		}
-	}
-	epd_job_prepare();
-	st = epd_refresh_step("erase", epd_display_clear_screen, EPD_COLOR_WHITE);
-	if (st != STATUS_OK) {
-		epd_busy_fallback_fixed();
-		epd_job_prepare();
-		st = epd_refresh_step("erase_retry", epd_display_clear_screen, EPD_COLOR_WHITE);
-	}
-	atomic_set(&s_refreshing, 0);
+	(void)epd_sleep(&s_disp.epd);
+	s_panel_asleep = true;
+	npm1300_board_charge_inhibit_set(false);
+	atomic_set(&s_plane_lock, 0);
+	atomic_set(&s_panel_busy, 0);
 	return st;
 }
 
-status_t epd_board_demo_request(void)
+status_t epd_board_lock_planes(void)
 {
-	uint8_t job = EPD_JOB_DEMO;
-
 	if (!s_ready) {
 		return STATUS_INVALID_STATE;
 	}
-	if (atomic_get(&s_refreshing) != 0) {
+	if (atomic_cas(&s_plane_lock, 0, 1) == false) {
 		return STATUS_INVALID_STATE;
 	}
-	if (k_msgq_put(&s_epd_jobs, &job, K_NO_WAIT) != 0) {
+	return STATUS_OK;
+}
+
+void epd_board_unlock_planes(void)
+{
+	atomic_set(&s_plane_lock, 0);
+}
+
+/**
+ * Activate 后应很快 BUSY=1 并维持数秒。轨掉或从未 BUSY → 假刷新。
+ * 等待中若 LDO2 掉电则立刻重开并判失败（需整次重踢）。
+ */
+static status_t epd_board_wait_refresh(int64_t *dt_ms)
+{
+	int64_t t0 = k_uptime_get();
+	uint32_t waited = 0U;
+	bool saw_busy = false;
+
+	if (!s_busy_usable) {
+		while (waited < 16000U) {
+			k_msleep(100);
+			waited += 100U;
+			if (!npm1300_board_epd_rail_ok()) {
+				npm1300_board_epd_power_set(true);
+				*dt_ms = k_uptime_get() - t0;
+				return STATUS_FAIL;
+			}
+		}
+		*dt_ms = k_uptime_get() - t0;
+		return npm1300_board_epd_rail_ok() ? STATUS_OK : STATUS_FAIL;
+	}
+
+	k_msleep(20);
+	waited = 20U;
+	/* Activate 后短窗内必须看到 BUSY，否则多半是掉电假 kick */
+	while ((waited < 300U) && (epd_busy() == 0)) {
+		if (!npm1300_board_epd_rail_ok()) {
+			npm1300_board_epd_power_set(true);
+			*dt_ms = k_uptime_get() - t0;
+			return STATUS_FAIL;
+		}
+		k_msleep(20);
+		waited += 20U;
+	}
+	if (epd_busy() == 0) {
+		*dt_ms = k_uptime_get() - t0;
+		return STATUS_FAIL;
+	}
+	saw_busy = true;
+
+	while (epd_busy() != 0) {
+		if (!npm1300_board_epd_rail_ok()) {
+			npm1300_board_epd_power_set(true);
+			*dt_ms = k_uptime_get() - t0;
+			return STATUS_FAIL;
+		}
+		k_msleep(50);
+		waited += 50U;
+		if (waited >= 40000U) {
+			*dt_ms = k_uptime_get() - t0;
+			return STATUS_FAIL;
+		}
+	}
+	k_msleep(200);
+	*dt_ms = k_uptime_get() - t0;
+
+	if (!npm1300_board_epd_rail_ok()) {
+		npm1300_board_epd_power_set(true);
+		return STATUS_FAIL;
+	}
+	if (saw_busy && (*dt_ms < (int64_t)EPD_REFRESH_MIN_MS)) {
 		return STATUS_FAIL;
 	}
 	return STATUS_OK;
 }
 
-status_t epd_board_erase_request(void)
+/**
+ * @param store_mode/page 非 0xFF：成功刷完后再写 Flash（避免与全刷抢电流）
+ */
+static status_t epd_board_refresh_core(uint8_t store_mode, uint8_t store_page)
 {
-	/* 按键统一走 demo（擦白+画面），与 eink_tag DISPLAY 一致 */
-	return epd_board_demo_request();
+	status_t st = STATUS_FAIL;
+	epd_display_status_t dst;
+	int64_t dt_wait = 0;
+	bool force_full;
+	bool do_store;
+	int pass;
+
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+
+	atomic_set(&s_panel_busy, 1);
+
+	if (atomic_get(&s_plane_lock) == 0) {
+		if (atomic_cas(&s_plane_lock, 0, 1) == false) {
+			atomic_set(&s_panel_busy, 0);
+			return STATUS_INVALID_STATE;
+		}
+	}
+
+	force_full = epd_want_full_prepare();
+	do_store = (store_mode != 0xFFU);
+
+	/* 刷屏窗口关触摸 LDO，电流留给 EPD LDO2 */
+	npm1300_board_touch_power_set(false);
+
+	for (pass = 0; pass < 2; pass++) {
+		bool use_full = force_full || (pass > 0);
+
+		epd_job_prepare(use_full);
+		dst = epd_display_refresh_start(&s_disp);
+
+		if (dst != EPD_DISPLAY_OK) {
+			st = STATUS_FAIL;
+			continue;
+		}
+		if (!npm1300_board_epd_rail_ok()) {
+			npm1300_board_epd_power_set(true);
+			st = STATUS_FAIL;
+			continue;
+		}
+
+		st = epd_board_wait_refresh(&dt_wait);
+		if (st == STATUS_OK) {
+			break;
+		}
+		printk("epd: refresh fail pass=%d — retry\n", pass);
+	}
+
+	if (st == STATUS_OK) {
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+		if (do_store && page_slot_is_ready()) {
+			status_t sst =
+				page_slot_store(store_mode, store_page, s_bw, s_red, s_plane_size);
+
+			if (sst != STATUS_OK) {
+				printk("epd: store fail st=%d\n", (int)sst);
+			}
+		}
+#else
+		ARG_UNUSED(store_page);
+#endif
+		if (force_full) {
+			s_fast_since_full = 0U;
+		} else {
+			s_fast_since_full++;
+		}
+	} else {
+		printk("epd: refresh failed\n");
+	}
+
+	atomic_set(&s_plane_lock, 0);
+
+	if (k_msgq_num_used_get(&s_epd_jobs) > 0) {
+		s_panel_asleep = false;
+	} else {
+		(void)epd_sleep(&s_disp.epd);
+		s_panel_asleep = true;
+	}
+
+	npm1300_board_touch_power_set(true);
+	npm1300_board_charge_inhibit_set(false);
+	atomic_set(&s_panel_busy, 0);
+	return st;
 }
 
-static void epd_smoke_thread(void *a, void *b, void *c)
+status_t epd_board_refresh(void)
+{
+	return epd_board_refresh_core(0xFFU, 0xFFU);
+}
+
+status_t epd_board_demo_request(void)
+{
+	epd_job_t job = {
+		.type = EPD_JOB_DEMO,
+	};
+
+	return epd_board_queue_job(&job);
+}
+
+status_t epd_board_refresh_request(void)
+{
+	epd_job_t job = {
+		.type = EPD_JOB_HOST,
+	};
+
+	return epd_board_queue_job(&job);
+}
+
+status_t epd_board_store_refresh_request(uint8_t mode, uint8_t page)
+{
+	epd_job_t job = {
+		.type = EPD_JOB_STORE_REFRESH,
+		.mode = mode,
+		.page = page,
+	};
+
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	if (!page_slot_mode_page_ok(mode, page)) {
+		return STATUS_INVALID_ARG;
+	}
+#else
+	ARG_UNUSED(mode);
+	ARG_UNUSED(page);
+	return STATUS_NOT_SUPPORTED;
+#endif
+	return epd_board_queue_job(&job);
+}
+
+status_t epd_board_show_slot_request(uint8_t mode, uint8_t page)
+{
+	epd_job_t job = {
+		.type = EPD_JOB_SHOW_SLOT,
+		.mode = mode,
+		.page = page,
+	};
+
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	if (!page_slot_mode_page_ok(mode, page)) {
+		return STATUS_INVALID_ARG;
+	}
+#else
+	ARG_UNUSED(mode);
+	ARG_UNUSED(page);
+	return STATUS_NOT_SUPPORTED;
+#endif
+	return epd_board_queue_job(&job);
+}
+
+uint8_t epd_board_size(void)
+{
+	return s_size;
+}
+
+const char *epd_board_panel_name(void)
+{
+	return (s_panel != NULL) ? s_panel->name : "?";
+}
+
+uint16_t epd_board_width(void)
+{
+	return s_ready ? epd_display_width(&s_disp) : 0U;
+}
+
+uint16_t epd_board_height(void)
+{
+	return s_ready ? epd_display_height(&s_disp) : 0U;
+}
+
+uint32_t epd_board_plane_size(void)
+{
+	return s_plane_size;
+}
+
+status_t epd_board_clear_planes(uint8_t planes_mask)
+{
+	status_t st = epd_board_guard_writable();
+
+	if (st != STATUS_OK) {
+		return st;
+	}
+	if ((planes_mask & (EPD_BOARD_PLANES_BW | EPD_BOARD_PLANES_RED)) == 0U) {
+		return STATUS_INVALID_ARG;
+	}
+
+	if ((planes_mask & EPD_BOARD_PLANES_BW) != 0U) {
+		memset(s_bw, 0xFF, s_plane_size);
+	}
+	if ((planes_mask & EPD_BOARD_PLANES_RED) != 0U) {
+		memset(s_red, 0x00, s_plane_size);
+	}
+	return STATUS_OK;
+}
+
+status_t epd_board_write_plane(uint8_t plane, uint16_t offset, const uint8_t *data, uint16_t len)
+{
+	uint8_t *dst;
+	status_t st = epd_board_guard_writable();
+
+	if (st != STATUS_OK) {
+		return st;
+	}
+	if ((data == NULL) || (len == 0U)) {
+		return STATUS_INVALID_ARG;
+	}
+	if (((uint32_t)offset + (uint32_t)len) > s_plane_size) {
+		return STATUS_INVALID_ARG;
+	}
+
+	if (plane == EPD_BOARD_PLANE_BW) {
+		dst = s_bw;
+	} else if (plane == EPD_BOARD_PLANE_RED) {
+		dst = s_red;
+	} else {
+		return STATUS_INVALID_ARG;
+	}
+
+	memcpy(dst + offset, data, len);
+	return STATUS_OK;
+}
+
+const uint8_t *epd_board_plane_data(uint8_t plane)
+{
+	if (!s_ready) {
+		return NULL;
+	}
+	if (plane == EPD_BOARD_PLANE_BW) {
+		return s_bw;
+	}
+	if (plane == EPD_BOARD_PLANE_RED) {
+		return s_red;
+	}
+	return NULL;
+}
+
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+static status_t epd_board_run_show_slot(uint8_t mode, uint8_t page)
 {
 	status_t st;
-	uint8_t job;
+
+	if (!page_slot_is_ready()) {
+		memset(s_bw, 0xFF, s_plane_size);
+		memset(s_red, 0x00, s_plane_size);
+	} else {
+		st = page_slot_load(mode, page, s_bw, s_red, s_plane_size);
+		if (st != STATUS_OK) {
+			return st;
+		}
+	}
+
+	return epd_board_refresh();
+}
+
+static status_t epd_board_run_store_refresh(uint8_t mode, uint8_t page)
+{
+	return epd_board_refresh_core(mode, page);
+}
+#endif
+
+static void epd_worker_thread(void *a, void *b, void *c)
+{
+	status_t st;
+	epd_job_t job;
 
 	ARG_UNUSED(a);
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
-
-	printk("epd: worker start (eink_tag-aligned erase+demo)\n");
 
 	st = epd_board_bringup();
 	if (st != STATUS_OK) {
@@ -571,39 +938,69 @@ static void epd_smoke_thread(void *a, void *b, void *c)
 		return;
 	}
 
-	printk("epd: boot demo start\n");
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	if (atomic_cas(&s_plane_lock, 0, 1)) {
+		st = epd_board_run_show_slot(PAGE_SLOT_MODE_HOME, 0U);
+		if (st != STATUS_OK) {
+			printk("epd: boot show fail st=%d\n", (int)st);
+		}
+	}
+#else
 	st = epd_board_test_run();
 	if (st != STATUS_OK) {
-		printk("epd: boot demo failed: %d\n", (int)st);
-	} else {
-		printk("epd: boot demo done\n");
+		printk("epd: boot demo fail st=%d\n", (int)st);
 	}
-
-	printk("epd: idle — BTN1 click queues erase+demo\n");
+#endif
 
 	while (1) {
 		if (k_msgq_get(&s_epd_jobs, &job, K_FOREVER) != 0) {
 			continue;
 		}
-		if (job != EPD_JOB_DEMO) {
+
+		if (epd_board_lock_planes() != STATUS_OK) {
 			continue;
 		}
-		printk("epd: queued demo start\n");
-		st = epd_board_test_run();
-		printk("epd: queued demo %s\n", (st == STATUS_OK) ? "done" : "failed");
+		if (job.type == EPD_JOB_DEMO) {
+			st = epd_board_test_run();
+		} else if (job.type == EPD_JOB_HOST) {
+			st = epd_board_refresh();
+		} else if (job.type == EPD_JOB_SHOW_SLOT) {
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+			st = epd_board_run_show_slot(job.mode, job.page);
+#else
+			epd_board_unlock_planes();
+			st = STATUS_NOT_SUPPORTED;
+#endif
+		} else if (job.type == EPD_JOB_STORE_REFRESH) {
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+			st = epd_board_run_store_refresh(job.mode, job.page);
+#else
+			epd_board_unlock_planes();
+			st = STATUS_NOT_SUPPORTED;
+#endif
+		} else {
+			epd_board_unlock_planes();
+			continue;
+		}
+
+		if (st != STATUS_OK) {
+			printk("epd: job fail st=%d type=%u\n", (int)st, (unsigned)job.type);
+		}
 	}
 }
 
-void epd_board_smoke_start(void)
+void epd_board_start(void)
 {
-	if (s_smoke_started) {
+	if (s_worker_started) {
 		return;
 	}
-	s_smoke_started = true;
-	atomic_set(&s_refreshing, 0);
+	s_worker_started = true;
+	s_panel_asleep = true;
+	s_fast_since_full = EPD_FULL_EVERY_N;
+	atomic_set(&s_plane_lock, 0);
+	atomic_set(&s_panel_busy, 0);
 	(void)k_msgq_purge(&s_epd_jobs);
 	(void)k_thread_create(&s_epd_thread, s_epd_stack, K_THREAD_STACK_SIZEOF(s_epd_stack),
-			      epd_smoke_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
+			      epd_worker_thread, NULL, NULL, NULL, 8, 0, K_NO_WAIT);
 	k_thread_name_set(&s_epd_thread, "epd");
-	printk("epd: async worker created\n");
 }

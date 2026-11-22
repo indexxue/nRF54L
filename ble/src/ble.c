@@ -85,6 +85,11 @@ bool ble_is_connected(void)
 	return ble_gap_is_connected();
 }
 
+status_t ble_disconnect(void)
+{
+	return ble_gatt_disconnect();
+}
+
 status_t ble_adv_start(void)
 {
 	return ble_gap_start_adv();

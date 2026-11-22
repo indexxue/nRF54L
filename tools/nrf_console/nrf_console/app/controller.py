@@ -201,6 +201,15 @@ class BleController:
             return
         self.cfg.last_address = address
         self.cfg.last_name = name
+        # Persist SN-derived UUIDs discovered by transport (not eink_tag 53530120 fallback).
+        last_svc = getattr(self._transport, "last_svc_uuid", "") or ""
+        last_rx = getattr(self._transport, "last_rx_uuid", "") or ""
+        last_tx = getattr(self._transport, "last_tx_uuid", "") or ""
+        if last_svc and last_rx and last_tx:
+            self.cfg.svc_uuid = last_svc
+            self.cfg.rx_uuid = last_rx
+            self.cfg.tx_uuid = last_tx
+            self._emit("log", f"GATT UUID svc={last_svc}")
         max_w = self._transport.max_write_size()
         self._connected = True
         self._emit("connected", data=True)
@@ -247,7 +256,7 @@ class BleController:
         self._fail_ack_waiters(RuntimeError("link lost"))
         self._connected = False
         self._emit("connected", data=False)
-        self._emit("log", "link lost")
+        self._emit("log", "link lost (device or host) — wait ~1s then Scan before Connect")
         self._emit("status", "idle")
         # If upload/connect was mid-flight, unlock UI; scan's own finally path also clears.
         if self._op != "scanning":
@@ -377,13 +386,20 @@ class BleController:
                     self._emit(
                         "error",
                         f"upload abort at {i}/{total}: "
-                        f"{cmd_name(cmd_id)} status={status}",
+                        f"{cmd_name(cmd_id)} status={status} "
+                        f"(HINT: -6=device busy; wait for refresh then retry)",
                     )
                     self._emit("status", "connected" if self._connected else "idle")
                     return
-                if i == 1 or i == total or (i % 10) == 0:
-                    self._emit("log", f"upload progress {i}/{total} ok")
-            self._emit("log", f"EPD upload [{label}] done — watch panel (async refresh)")
+                if i == 1 or i == total or (i % 20) == 0:
+                    self._emit(
+                        "log",
+                        f"upload {i}/{total} {cmd_name(cmd_id)} ACK status={status}",
+                    )
+            self._emit(
+                "log",
+                f"EPD upload [{label}] done — panel refresh runs on device",
+            )
             self._emit("status", "connected" if self._connected else "idle")
         except Exception as exc:  # noqa: BLE001
             self._emit("error", f"upload failed: {exc}")
