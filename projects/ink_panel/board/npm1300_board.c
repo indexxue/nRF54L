@@ -275,16 +275,73 @@ bool npm1300_board_epd_rail_ok(void)
 	return (ldsw & NPM1300_LDSW_STAT_LDO2) != 0U;
 }
 
+/** LDSWSTATUS：bit0=LoadSW1，bit1=LDO1（触摸） */
+#define NPM1300_LDSW_STAT_LDO1 0x02u
+
 void npm1300_board_touch_power_set(bool on)
 {
+	npm1300_status_t st = NPM1300_OK;
+	uint8_t ldsw = 0U;
+
 	k_mutex_lock(&s_npm_lock, K_FOREVER);
 	if (s_gpio_ready) {
 		gpio_pin_set_dt(&s_touch_ldo, on ? 1 : 0);
 	}
-	if (s_rails_cfg_ok && g_npm1300.initialized) {
-		(void)npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW1, on);
+	if (!(s_rails_cfg_ok && g_npm1300.initialized)) {
+		k_mutex_unlock(&s_npm_lock);
+		return;
 	}
+
+	if (!on) {
+		(void)npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW1, false);
+		k_mutex_unlock(&s_npm_lock);
+		return;
+	}
+
+	/* 与 EPD 同套路：关 → 写 LDO 模式/电压 → 开（防残留 LoadSW） */
+	(void)npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW1, false);
 	k_mutex_unlock(&s_npm_lock);
+	k_msleep(5);
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
+
+	st = npm1300_ldsw_set_mode(&g_npm1300, NPM1300_LDSW1, NPM1300_LDSW_MODE_LDO);
+	if (st == NPM1300_OK) {
+		st = npm1300_ldsw_set_vout_mv(&g_npm1300, NPM1300_LDSW1, NPM1300_BOARD_TOUCH_MV);
+	}
+	if (st == NPM1300_OK) {
+		st = npm1300_ldsw_enable(&g_npm1300, NPM1300_LDSW1, true);
+	}
+	(void)npm1300_ldsw_get_status(&g_npm1300, NPM1300_LDSW1, &ldsw);
+	k_mutex_unlock(&s_npm_lock);
+
+	if ((st != NPM1300_OK) || ((ldsw & NPM1300_LDSW_STAT_LDO1) == 0U)) {
+		printk("npm1300: touch rail warn st=%d ldsw=0x%02x\n", (int)st, ldsw);
+	}
+}
+
+void npm1300_board_touch_rail_log(const char *tag)
+{
+	uint8_t ldsw = 0U;
+	uint8_t ldosel = 0U;
+	uint8_t voutsel = 0U;
+	int en_gpio = -1;
+
+	if (s_gpio_ready) {
+		en_gpio = gpio_pin_get_dt(&s_touch_ldo);
+	}
+
+	if (s_rails_cfg_ok && g_npm1300.initialized) {
+		k_mutex_lock(&s_npm_lock, K_FOREVER);
+		(void)npm1300_ldsw_get_status(&g_npm1300, NPM1300_LDSW1, &ldsw);
+		(void)npm1300_reg_read(&g_npm1300, 0x0808u, &ldosel); /* LDSW1LDOSEL */
+		(void)npm1300_reg_read(&g_npm1300, 0x080Cu, &voutsel); /* LDSW1VOUTSEL */
+		k_mutex_unlock(&s_npm_lock);
+	}
+
+	printk("npm1300: touch rail [%s] EN_GPIO=%d ldsw=0x%02x LDO1=%d LDOSEL=0x%02x VOUT=0x%02x (~%umV)\n",
+	       (tag != NULL) ? tag : "?", en_gpio, ldsw,
+	       (ldsw & NPM1300_LDSW_STAT_LDO1) ? 1 : 0, ldosel, voutsel,
+	       (unsigned)(1000U + ((uint16_t)voutsel * 100U)));
 }
 
 void npm1300_board_charge_inhibit_set(bool inhibit)

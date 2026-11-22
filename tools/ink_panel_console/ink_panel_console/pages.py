@@ -69,10 +69,10 @@ PAGE_BUILDERS: dict[str, Callable[[], tuple[bytes, bytes]]] = {
     "info": make_info,
 }
 
-# 默认槽：模板名 → (mode, page_id)；固件当前写入 home/0
+# 默认槽：模板名 → (mode, page_id)；notes/info 内容页从 1 起（page0 非内容）
 PAGE_DEFAULT_SLOT: dict[str, tuple[int, int]] = {
     "bands": (0, 0),
     "home": (0, 0),
-    "notes": (1, 0),
-    "info": (2, 0),
+    "notes": (1, 1),
+    "info": (2, 1),
 }

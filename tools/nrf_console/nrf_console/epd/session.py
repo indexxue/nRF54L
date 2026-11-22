@@ -56,6 +56,9 @@ def resolve_panel(
     return panel
 
 
+FLAG_SHOW = 1 << 0
+
+
 def pack_begin(
     bw: bytes | None,
     red: bytes | None,
@@ -63,7 +66,11 @@ def pack_begin(
     width: int | None = None,
     height: int | None = None,
     panel: PanelProfile | None = None,
+    mode: int | None = None,
+    page_id: int = 0,
+    show: bool = True,
 ) -> bytes:
+    """18B base；若 mode 非 None 则追加 mode/page（20B，flags.bit0=show）。"""
     if bw is None and red is None:
         raise ValueError("need at least one plane")
     panel = panel or resolve_panel(bw, red, width=width, height=height)
@@ -88,17 +95,24 @@ def pack_begin(
         red_len = plane_size
         red_crc = crc32(red)
 
-    return struct.pack(
+    flags = 0
+    if mode is not None and show:
+        flags |= FLAG_SHOW
+
+    base = struct.pack(
         "<HHBBHHII",
         panel.width,
         panel.height,
         planes,
-        0,
+        flags,
         bw_len,
         red_len,
         bw_crc,
         red_crc,
     )
+    if mode is None:
+        return base
+    return base + struct.pack("<BB", mode & 0xFF, page_id & 0xFF)
 
 
 def pack_chunk(plane: int, offset: int, data: bytes, *, plane_size: int) -> bytes:
@@ -136,6 +150,9 @@ def iter_upload_steps(
     width: int | None = None,
     height: int | None = None,
     chunk_data_max: int = CHUNK_DATA_MAX,
+    mode: int | None = None,
+    page_id: int = 0,
+    show: bool = True,
 ) -> Iterator[tuple[int, bytes]]:
     """Yield (cmd_id, payload) for a full upload session."""
     if chunk_data_max < 1:
@@ -146,7 +163,9 @@ def iter_upload_steps(
     panel = resolve_panel(bw, red, width=width, height=height)
     plane_size = panel.plane_size
 
-    yield BLE_CMD_DISP_BEGIN, pack_begin(bw, red, panel=panel)
+    yield BLE_CMD_DISP_BEGIN, pack_begin(
+        bw, red, panel=panel, mode=mode, page_id=page_id, show=show
+    )
     if bw is not None:
         for payload in iter_chunks(
             BLE_CMD_DISP_PLANE_BW, bw, plane_size=plane_size, max_n=chunk_data_max

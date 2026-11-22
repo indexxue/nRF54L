@@ -23,7 +23,8 @@ PANEL_WIDTH = 400
 PANEL_HEIGHT = 300
 PLANE_SIZE = 15000  # 400×300 / 8
 
-# α firmware：REFRESH 固定写入 home/0；β 起 BEGIN 带 mode/page
+# β：BEGIN 20B 带 mode/page；flags.bit0=切显
+# notes/info page0 非内容页；组标题 / content_count 走 4001
 MODE_HOME = 0
 MODE_NOTES = 1
 MODE_INFO = 2
@@ -33,6 +34,10 @@ MODE_NAMES = {
     MODE_NOTES: "notes",
     MODE_INFO: "info",
 }
+
+NOTES_CONTENT_MAX = 7  # page 1..7
+INFO_CONTENT_MAX = 3  # page 1..3
+GROUP_TITLE_MAX = 31  # UTF-8 字节上限（工具与固件一致）
 
 
 @dataclass
@@ -46,8 +51,8 @@ class InkPanelConfig:
     tx_uuid: str = DEFAULT_TX_UUID
     scan_timeout_s: float = 8.0
     ack_timeout_s: float = 12.0
-    # α=False：BEGIN 仍 18B；β=True：追加 mode/page（固件未升前勿开）
-    begin_with_slot: bool = False
+    # β 默认 True：BEGIN 20B + mode/page
+    begin_with_slot: bool = True
 
     def apply_sn(self, sn: str) -> None:
         self.svc_uuid, self.rx_uuid, self.tx_uuid = uuids_from_sn(sn)
@@ -72,6 +77,9 @@ def load_config(path: Path | None = None) -> InkPanelConfig:
         for key, value in raw.items():
             if key in known:
                 setattr(cfg, key, value)
+    # β 固件只收 20B；旧 α 配置里 begin_with_slot=false 会强制升到 True
+    if not cfg.begin_with_slot:
+        cfg.begin_with_slot = True
     return cfg
 
 
@@ -109,6 +117,7 @@ def write_nrf_console_bridge(cfg: InkPanelConfig) -> Path:
         "window_geometry": "1100x720",
         "presets": [
             {"name": "PING", "cmd_id": 1001, "payload_hex": ""},
+            {"name": "GET_SLOT_STATUS", "cmd_id": 1002, "payload_hex": ""},
             {"name": "DISPLAY", "cmd_id": 2001, "payload_hex": ""},
         ],
     }

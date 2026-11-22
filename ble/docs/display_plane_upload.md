@@ -1,7 +1,7 @@
 # BLE 墨水屏平面上传协议
 
 Host 通过 GATT 分片上传 **MCU 帧缓冲**（非绘图指令），设备 CRC 校验后全刷。  
-对应固件：`ble/include/ble_cmd.h`、`projects/eink_tag`。
+对应固件：`ble/include/ble_cmd.h`、`projects/eink_tag`（18B）、`projects/ink_panel`（β：**20B** 扩展，见文末）。
 
 ## 前提
 
@@ -43,11 +43,12 @@ IDLE ──BEGIN──► RECEIVING ──CHUNK×N──► RECEIVING ──REFR
 3. **REFRESH**：对已声明平面做整平面 CRC32；失败则回 `IDLE` 且 ACK≠0；成功则**锁定缓冲**、入队异步全刷、回 `IDLE`，ACK=0
 4. 刷屏进行中：`BEGIN` / `CHUNK` / 再次刷屏 → `STATUS_INVALID_STATE`（-6）
 
-设备只维护 **当前一屏** live buffer，无 page 槽位。
+`eink_tag` 只维护 **当前一屏** live buffer，无 page 槽位。  
+`ink_panel` β：CHUNK 仍写 RAM 暂存；REFRESH 写入 W25Q **mode/page** 槽，可选切显。
 
 ## Payload
 
-### 2002 `DISP_BEGIN`（固定 **18** 字节）
+### 2002 `DISP_BEGIN`（`eink_tag` 固定 **18** 字节）
 
 | 偏移 | 字段 | 类型 | 说明 |
 |------|------|------|------|
@@ -59,6 +60,18 @@ IDLE ──BEGIN──► RECEIVING ──CHUNK×N──► RECEIVING ──REFR
 | 8 | `red_len` | u16 LE | 含 RED 时为 **4736**，否则 0 |
 | 10 | `bw_crc` | u32 LE | 整平面 CRC32；未传 BW 填 0 |
 | 14 | `red_crc` | u32 LE | 同上 |
+
+### 2002 `DISP_BEGIN`（`ink_panel` β 固定 **20** 字节）
+
+前 18 B 同上（宽高按当前面板，默认 400×300 / 15000），并：
+
+| 偏移 | 字段 | 类型 | 说明 |
+|------|------|------|------|
+| 5 | `flags` | u8 | **bit0**=REFRESH 写槽后是否切显；其它 bit 须 0 |
+| 18 | `mode` | u8 | 0=home，1=notes，2=info |
+| 19 | `page_id` | u8 | 模内页号（范围见 `page_slot`） |
+
+**不解析旧 18B**；错长度 → `-2`。
 
 ### 2003 `DISP_CHUNK`（5 + N 字节，N≤235）
 
@@ -102,7 +115,7 @@ IDLE ──BEGIN──► RECEIVING ──CHUNK×N──► RECEIVING ──REFR
 | 0 | `STATUS_OK` | 成功 |
 | -1 | `STATUS_FAIL` | CRC 不符 / 队列满 |
 | -2 | `STATUS_INVALID_ARG` | 长度/平面/分辨率错误 |
-| -5 | `STATUS_NOT_SUPPORTED` | `flags≠0` 或未知命令 |
+| -5 | `STATUS_NOT_SUPPORTED` | `flags` 非法位 / 未知命令 |
 | -6 | `STATUS_INVALID_STATE` | 未 BEGIN、EPD 未就绪、刷屏中 |
 
 ## Host 伪代码

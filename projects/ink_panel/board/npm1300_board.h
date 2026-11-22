@@ -37,6 +37,9 @@ bool npm1300_board_epd_rail_ok(void);
 /** TOUCH_LDO_EN → LDO1；产品常开 */
 void npm1300_board_touch_power_set(bool on);
 
+/** 打印触摸轨：GPIO EN + LDSW1 状态（CAP 初始化前诊断） */
+void npm1300_board_touch_rail_log(const char *tag);
+
 /**
  * 禁充 → 关充 → 关 EPD → 进 Ship。
  * 成功后不应再访问 I2C；返回 0 表示已发出 ship 任务。

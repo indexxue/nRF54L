@@ -101,9 +101,10 @@ class InkPanelClient:
     ) -> None:
         max_frame = self.transport.max_write_size()
         payload_cap = max_frame - 4
-        if payload_cap < 18:
+        need = 20 if self.cfg.begin_with_slot else 18
+        if payload_cap < need:
             raise RuntimeError(
-                f"ATT write max {max_frame} B too small for DISP_BEGIN"
+                f"ATT write max {max_frame} B too small for DISP_BEGIN (need ≥{need + 4})"
             )
         chunk_data_max = min(235, max(1, payload_cap - 5))
         steps = list(

@@ -15,9 +15,11 @@ from nrf_console.epd import build_page, iter_upload_steps
 from nrf_console.protocol.codec import decode_frame, encode_frame, format_hex
 from nrf_console.protocol.cmds import (
     BLE_CMD_ACK,
+    BLE_CMD_SLOT_STATUS,
     cmd_name,
     describe_frame,
     parse_ack_payload,
+    parse_slot_status,
 )
 from nrf_console.transport import DeviceInfo, Transport, TransportError, create_transport
 
@@ -249,6 +251,11 @@ class BleController:
                     self._resolve_ack(int(ack["req_cmd_id"]), int(ack["status"]))
                 except ValueError:
                     pass
+            elif frame.cmd_id == BLE_CMD_SLOT_STATUS:
+                try:
+                    self._emit("slot_status", data=parse_slot_status(frame.payload))
+                except ValueError:
+                    pass
         except ValueError as exc:
             self._emit("rx", f"← raw [{hex_s}] ({exc})")
 
@@ -328,8 +335,22 @@ class BleController:
         label: str = "custom",
         width: int | None = None,
         height: int | None = None,
+        mode: int | None = None,
+        page_id: int = 0,
+        show: bool = True,
     ) -> None:
-        self._submit(self._upload_planes(bw, red, label=label, width=width, height=height))
+        self._submit(
+            self._upload_planes(
+                bw,
+                red,
+                label=label,
+                width=width,
+                height=height,
+                mode=mode,
+                page_id=page_id,
+                show=show,
+            )
+        )
 
     async def _upload_page(self, page_key: str) -> None:
         try:
@@ -347,6 +368,9 @@ class BleController:
         label: str = "custom",
         width: int | None = None,
         height: int | None = None,
+        mode: int | None = None,
+        page_id: int = 0,
+        show: bool = True,
     ) -> None:
         if self._transport is None or not self._transport.is_connected() or not self._connected:
             self._emit("error", "not connected")
@@ -359,24 +383,39 @@ class BleController:
             max_frame = self._transport.max_write_size()
             # CMD frame = 4 hdr + payload; CHUNK payload = 5 hdr + data
             payload_cap = max_frame - 4
-            if payload_cap < 18:
+            need_begin = 20 if mode is not None else 18
+            if payload_cap < need_begin:
                 raise RuntimeError(
-                    f"ATT write max {max_frame} B too small for DISP_BEGIN (need ≥22). "
+                    f"ATT write max {max_frame} B too small for DISP_BEGIN "
+                    f"(need ≥{need_begin + 4}). "
                     "Rebuild firmware with larger BT_L2CAP_TX_MTU and reflash."
                 )
             chunk_data_max = min(235, max(1, payload_cap - 5))
             steps = list(
                 iter_upload_steps(
-                    bw, red, width=width, height=height, chunk_data_max=chunk_data_max
+                    bw,
+                    red,
+                    width=width,
+                    height=height,
+                    chunk_data_max=chunk_data_max,
+                    mode=mode,
+                    page_id=page_id,
+                    show=show,
                 )
             )
             total = len(steps)
             geom = f"{width}x{height}" if width and height else f"plane={len(bw)}"
+            begin_plen = len(steps[0][1]) if steps else 0
+            slot_info = (
+                f" BEGIN={begin_plen}B mode={mode} page={page_id} show={int(show)}"
+                if mode is not None
+                else f" BEGIN={begin_plen}B"
+            )
             self._emit(
                 "log",
                 f"EPD upload [{label}] {geom}: {total} frames "
                 f"(BEGIN + {total - 2} CHUNK + REFRESH), "
-                f"chunk_data≤{chunk_data_max}, wor≤{max_frame}",
+                f"chunk_data≤{chunk_data_max}, wor≤{max_frame},{slot_info}",
             )
             for i, (cmd_id, payload) in enumerate(steps, start=1):
                 if not self._connected:

@@ -16,6 +16,7 @@ project(ink_panel)
 set(CBB_NPM1300_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/npm1300)
 set(CBB_EPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/epd)
 set(CBB_W25Q_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/w25q)
+set(CBB_CAP1203_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cbb/cap1203)
 
 target_sources(app PRIVATE
   src/app.c
@@ -30,7 +31,6 @@ if(CONFIG_INK_PANEL_EPD)
     ${CBB_EPD_DIR}/epd.c
     ${CBB_EPD_DIR}/epd_display.c
     ${CBB_EPD_DIR}/epd_display_assets.c
-    ${CBB_EPD_DIR}/panels/epd_panel_gdey029z95.c
     ${CBB_EPD_DIR}/panels/epd_panel_ws_4in2b_v2.c
   )
 endif()
@@ -40,6 +40,13 @@ if(CONFIG_INK_PANEL_W25Q)
     board/w25q_board.c
     board/page_slot.c
     ${CBB_W25Q_DIR}/w25q.c
+  )
+endif()
+
+if(CONFIG_INK_PANEL_CAP1203)
+  target_sources(app PRIVATE
+    board/cap1203_board.c
+    ${CBB_CAP1203_DIR}/cap1203.c
   )
 endif()
 
@@ -56,4 +63,8 @@ endif()
 
 if(CONFIG_INK_PANEL_W25Q)
   target_include_directories(app PRIVATE ${CBB_W25Q_DIR})
+endif()
+
+if(CONFIG_INK_PANEL_CAP1203)
+  target_include_directories(app PRIVATE ${CBB_CAP1203_DIR})
 endif()

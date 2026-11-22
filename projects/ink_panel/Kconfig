@@ -33,6 +33,14 @@ config INK_PANEL_W25Q
 	  Pins: SCK=P2.06 MOSI=P2.08 MISO=P2.09 CS=P2.10 WP=P2.05 HOLD=P2.04.
 	  Uses spi00 (SERIAL00; disables uart00; RTT log).
 
+config INK_PANEL_CAP1203
+	bool "Enable CAP1203 capacitive touch (CS1=L / CS2=R)"
+	select I2C
+	default y
+	help
+	  γ HMI：CS1 模内翻页，CS2 切模 home→notes→info。
+	  与 nPM1300 共 i2c21；ALERT=P0.01。
+
 menu "Zephyr Kernel"
 source "Kconfig.zephyr"
 endmenu

@@ -22,7 +22,7 @@ extern "C" {
 #define EPD_BOARD_PLANES_BW  (1U << 0)
 #define EPD_BOARD_PLANES_RED (1U << 1)
 
-/** 与 NVS_EPD_PANEL_* 同值 */
+/** 产品仅 4.2"（历史 2.9 常量保留兼容，勿再选） */
 #define EPD_BOARD_SIZE_2IN9 0U
 #define EPD_BOARD_SIZE_4IN2 1U
 
@@ -41,10 +41,10 @@ status_t epd_board_demo_request(void);
 status_t epd_board_refresh_request(void);
 
 /**
- * 将当前平面写入 Flash 页槽后再全刷（K_NO_WAIT）。
- * mode/page 见 page_slot.h。
+ * 将当前平面写入 Flash 页槽（K_NO_WAIT）。
+ * @param show true：刷屏后再落槽；false：只写槽不改当前显
  */
-status_t epd_board_store_refresh_request(uint8_t mode, uint8_t page);
+status_t epd_board_store_refresh_request(uint8_t mode, uint8_t page, bool show);
 
 /** 从 Flash 页槽加载到平面缓冲并全刷（K_NO_WAIT）。空槽→白屏。 */
 status_t epd_board_show_slot_request(uint8_t mode, uint8_t page);

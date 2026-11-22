@@ -15,8 +15,9 @@ EVT 自有板。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)
 | EPD 胶水 | `board/epd_board.*` + `cbb/epd` |
 | 进度与终态预览 | `tmp/ink_panel/` |
 
-本轮（α）：W25Q **页槽**（home/notes/info）+ 开机刷 slot0；BLE REFRESH 写入 home/0。  
-本轮不做：NFC 业务、字库描字、CAP1203（γ）、BEGIN mode/page（β）。
+α / β / γ **DONE**：W25Q 页槽、BEGIN mode/page、CAP1203 L 翻页 / R 切模。  
+组 meta（IPS2）：notes/info **page0 不显示**；标题 ≤31 UTF-8；`content_count` 管翻页；连上推 **8002 SLOT_STATUS**。  
+更后：NFC、字库描字、睡眠。
 
 ## 板级（EVT 网表）
 
@@ -27,20 +28,23 @@ EVT 自有板。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)
 | LED_STATUS | `LED_STATUS_N` | **P1.13** ACTIVE_LOW |
 | BTN1 | `BTN_USER_N` | **P0.00** |
 | BTN2 | — | **未接**（勿占用 `TOUCH_ALERT` P0.01） |
+| CAP1203 | I2C21 + ALERT | SCL=P1.11 SDA=P1.12；ALERT=**P0.01**；CS1=L / CS2=R |
 | BLE 2.4G | — | 片上 RADIO（设备名 `ink_panel`） |
 | EPD | — | SCK=P1.08 MOSI=P1.09 CS=P1.10 DC=P1.05 RST=P1.06 BUSY=P1.07 |
 | W25Q64 | — | SPIM00：SCK=P2.06 MOSI=P2.08 MISO=P2.09 CS=P2.10（字库/图形预留） |
 
-## 按键
+## 本机 HMI
 
 | 操作 | 行为 |
 |------|------|
-| BTN1 **单击** | 已连接 → **断连**（随后自动再广播）；未连接 → **开广播**以便重连 |
-| BTN1 **双击** | 预留（2.9" 已去掉） |
+| 触摸 **L**（CAP1203 CS1） | notes/info 在 **1..content_count** 循环；home / count=0 → 忽略；空槽 → 白屏 |
+| 触摸 **R**（CAP1203 CS2） | 切模 **home → notes@1 → info@1 → home** |
+| BTN1 **单击** | 已连接 → **断连**（随后自动再广播）；未连接 → **开广播** |
+| BTN1 **双击** | 预留 |
 | BTN1 长按 ≈5s | `boot_mode=factory` + 冷复位（须 slot1 已烧 factory） |
 
-刷屏在 EPD 线程；main 只入队 / 写平面。勿用复位键看日志（会断 J-Link RTT）。  
-产品翻页/切模：触摸 CAP1203（γ）。实验室仍可用 BLE `DISPLAY(2001)` 入队 demo。
+刷屏在 EPD 线程；main 只入队。勿用复位键看日志（会断 J-Link RTT）。  
+实验室仍可用 BLE `DISPLAY(2001)` 入队 demo。
 
 ## 面板
 
@@ -57,7 +61,10 @@ EVT 自有板。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)
 | RX Write：`E9 03 00 00`（PING 1001） | Notify ACK；RTT `app: PING ok` |
 | 保持连接约 20s | HEARTBEAT Notify；RTT `app: HEARTBEAT` |
 | DISPLAY(2001) | 入队本地 demo；ACK=0 |
-| BEGIN/CHUNK/REFRESH（2002–2004） | 按 4.2" 上传；CRC 后 **写入 Flash home/0 并刷屏**（α） |
+| BEGIN/CHUNK/REFRESH（2002–2004） | BEGIN **20B** 带 mode/page；**拒** notes/info page0；CRC 后写指定槽；`flags.bit0=1` 切显 |
+| GET_SLOT_STATUS（1002） | 上行 **8002**（73B）+ ACK |
+| SET_GROUP_META（4001） | 35B：mode+count+title_len+title[32]；写 meta 后推 8002 |
+| 连接后（Notify 开） | 设备主动 **8002 SLOT_STATUS** |
 | 刷屏中再发 PING | 仍有 ACK |
 | 刷屏中再 BEGIN/CHUNK/REFRESH | ACK `STATUS_INVALID_STATE` |
 
@@ -68,21 +75,16 @@ EVT 自有板。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)
 - `width=400`，`height=300`
 - 含 BW/RED 时对应 `len=15000`，CRC32 为整平面
 
-### 2.9" 上传尺寸
-
-双击切到 2.9 并复位后：
-
-- `width=128`，`height=296`，`len=4736`
-
-## W25Q 页槽（α）
+## W25Q 页槽 + 组 meta（IPS2）
 
 | 区 | 说明 |
 |----|------|
-| meta @0x0 | 4KB：magic/valid 位图 |
-| home×1 + notes×8 + info×4 | 各 32KB；空槽刷白 |
+| meta @0x0 | 4KB：magic=`IPS2`、valid 位图、notes/info 组标题与 `content_count` |
+| home×1 + notes×8 + info×4 | 各 32KB；notes/info **page0 物理保留但不作内容页**；空槽刷白 |
 | font_cjk @0x69000 | 2MB 预留（不读） |
 
-开机：`page_slot` 加载 **home/0** 刷屏。Host `REFRESH`：RAM 帧 → 存 home/0 → 刷屏。复位后再开机应仍见上次画面。细节见 [`tmp/ink_panel/PRODUCT.md`](../../tmp/ink_panel/PRODUCT.md)。
+开机：刷 **home/0**。内容页：home/0；notes **1..7**；info **1..3**。  
+Host：`BEGIN(mode,page,flags)` → CHUNK → `REFRESH` 写该槽；组标题/页数用 **4001**。细节见 [`tmp/ink_panel/PRODUCT.md`](../../tmp/ink_panel/PRODUCT.md)。
 
 ## 构建 / 烧录
 

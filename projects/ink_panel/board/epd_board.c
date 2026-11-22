@@ -45,12 +45,13 @@
 #define EPD_JOB_HOST           2U
 #define EPD_JOB_SHOW_SLOT      3U
 #define EPD_JOB_STORE_REFRESH  4U
+#define EPD_JOB_STORE_ONLY     5U
 
 typedef struct {
 	uint8_t type;
 	uint8_t mode;
 	uint8_t page;
-	uint8_t reserved;
+	uint8_t show; /* STORE_*：1=刷后写槽；0=只写槽 */
 } epd_job_t;
 /*
  * SPIM20 core=16 MHz；用 8 MHz → PRESCALER=2。
@@ -99,10 +100,9 @@ K_MSGQ_DEFINE(s_epd_jobs, sizeof(epd_job_t), 2, 4);
 
 static const epd_panel_info_t *epd_board_pick_panel(uint8_t size)
 {
-	if (size == EPD_BOARD_SIZE_4IN2) {
-		return &epd_panel_ws_4in2b_v2;
-	}
-	return &epd_panel_gdey029z95;
+	ARG_UNUSED(size);
+	/* γ：产品仅 4.2"；已从镜像剔除 2.9" 面板源 */
+	return &epd_panel_ws_4in2b_v2;
 }
 
 static status_t epd_board_guard_writable(void)
@@ -555,7 +555,7 @@ status_t epd_board_test_run(void)
 	}
 
 	epd_display_demo_bwr_fill(&s_disp, s_demo_title,
-				  (s_size == EPD_BOARD_SIZE_4IN2) ? "4.2in" : "2.9in",
+				  "4.2in",
 				  (s_panel != NULL) ? s_panel->name : "EPD");
 	epd_display_fill_rect(&s_disp, 0U, 44U, (uint16_t)(epd_display_width(&s_disp) - 1U), 67U,
 			      EPD_COLOR_WHITE);
@@ -687,8 +687,7 @@ static status_t epd_board_refresh_core(uint8_t store_mode, uint8_t store_page)
 	force_full = epd_want_full_prepare();
 	do_store = (store_mode != 0xFFU);
 
-	/* 刷屏窗口关触摸 LDO，电流留给 EPD LDO2 */
-	npm1300_board_touch_power_set(false);
+	/* γ：触摸 LDO1 常开（关轨会导致 CAP1203 I2C NACK 刷屏） */
 
 	for (pass = 0; pass < 2; pass++) {
 		bool use_full = force_full || (pass > 0);
@@ -744,7 +743,6 @@ static status_t epd_board_refresh_core(uint8_t store_mode, uint8_t store_page)
 		s_panel_asleep = true;
 	}
 
-	npm1300_board_touch_power_set(true);
 	npm1300_board_charge_inhibit_set(false);
 	atomic_set(&s_panel_busy, 0);
 	return st;
@@ -773,12 +771,13 @@ status_t epd_board_refresh_request(void)
 	return epd_board_queue_job(&job);
 }
 
-status_t epd_board_store_refresh_request(uint8_t mode, uint8_t page)
+status_t epd_board_store_refresh_request(uint8_t mode, uint8_t page, bool show)
 {
 	epd_job_t job = {
-		.type = EPD_JOB_STORE_REFRESH,
+		.type = show ? EPD_JOB_STORE_REFRESH : EPD_JOB_STORE_ONLY,
 		.mode = mode,
 		.page = page,
+		.show = show ? 1U : 0U,
 	};
 
 #if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
@@ -788,6 +787,7 @@ status_t epd_board_store_refresh_request(uint8_t mode, uint8_t page)
 #else
 	ARG_UNUSED(mode);
 	ARG_UNUSED(page);
+	ARG_UNUSED(show);
 	return STATUS_NOT_SUPPORTED;
 #endif
 	return epd_board_queue_job(&job);
@@ -900,6 +900,79 @@ const uint8_t *epd_board_plane_data(uint8_t plane)
 }
 
 #if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+/**
+ * 首页叠层画到当前帧缓冲（不落 Flash）。
+ * 左下纵向排列；无黑底；字号 12。字库未接中文用 ASCII。
+ */
+static void epd_board_draw_string_halo(uint16_t x, uint16_t y, const char *str,
+				       epd_color_t fg)
+{
+	epd_display_draw_string(&s_disp, (uint16_t)(x - 1U), y, str, EPD_FONT_12,
+				EPD_COLOR_WHITE);
+	epd_display_draw_string(&s_disp, (uint16_t)(x + 1U), y, str, EPD_FONT_12,
+				EPD_COLOR_WHITE);
+	epd_display_draw_string(&s_disp, x, (uint16_t)(y - 1U), str, EPD_FONT_12,
+				EPD_COLOR_WHITE);
+	epd_display_draw_string(&s_disp, x, (uint16_t)(y + 1U), str, EPD_FONT_12,
+				EPD_COLOR_WHITE);
+	epd_display_draw_string(&s_disp, x, y, str, EPD_FONT_12, fg);
+}
+
+static void epd_board_apply_home_overlay(void)
+{
+	uint8_t flags;
+	char line[32];
+	uint8_t notes;
+	uint8_t info;
+	uint16_t y;
+	uint16_t h;
+	uint16_t line_h = 14U;
+	uint8_t lines = 0U;
+
+	if (!page_slot_is_ready() || !epd_display_is_ready(&s_disp)) {
+		return;
+	}
+	flags = page_slot_home_overlay_get();
+	if (flags == 0U) {
+		return;
+	}
+
+	if ((flags & PAGE_SLOT_OVL_PAGES) != 0U) {
+		lines = (uint8_t)(lines + 2U); /* NOTES + INFO */
+	}
+	if ((flags & PAGE_SLOT_OVL_BATT) != 0U) {
+		lines++;
+	}
+	if (lines == 0U) {
+		return;
+	}
+
+	h = epd_display_height(&s_disp);
+	/* 左下纵向：从下往上留出行距 */
+	y = (h > (uint16_t)(lines * line_h + 4U))
+		    ? (uint16_t)(h - (uint16_t)(lines * line_h) - 4U)
+		    : 2U;
+
+	if ((flags & PAGE_SLOT_OVL_PAGES) != 0U) {
+		notes = page_slot_group_content_count(PAGE_SLOT_MODE_NOTES);
+		info = page_slot_group_content_count(PAGE_SLOT_MODE_INFO);
+		snprintk(line, sizeof(line), "NOTES %uP", (unsigned)notes);
+		epd_board_draw_string_halo(6U, y, line, EPD_COLOR_BLACK);
+		y = (uint16_t)(y + line_h);
+		snprintk(line, sizeof(line), "INFO %uP", (unsigned)info);
+		epd_board_draw_string_halo(6U, y, line, EPD_COLOR_BLACK);
+		y = (uint16_t)(y + line_h);
+	}
+	if ((flags & PAGE_SLOT_OVL_BATT) != 0U) {
+		snprintk(line, sizeof(line), "BAT --");
+		epd_board_draw_string_halo(6U, y, line, EPD_COLOR_RED);
+	}
+
+	printk("epd: home overlay flags=0x%02x notes=%u info=%u\n", (unsigned)flags,
+	       (unsigned)page_slot_group_content_count(PAGE_SLOT_MODE_NOTES),
+	       (unsigned)page_slot_group_content_count(PAGE_SLOT_MODE_INFO));
+}
+
 static status_t epd_board_run_show_slot(uint8_t mode, uint8_t page)
 {
 	status_t st;
@@ -914,12 +987,52 @@ static status_t epd_board_run_show_slot(uint8_t mode, uint8_t page)
 		}
 	}
 
+	if (mode == PAGE_SLOT_MODE_HOME) {
+		epd_board_apply_home_overlay();
+	}
+
 	return epd_board_refresh();
 }
 
+/**
+ * 写槽并刷屏。首页：先存干净底图，再叠层后刷（叠层不写入 Flash）。
+ */
 static status_t epd_board_run_store_refresh(uint8_t mode, uint8_t page)
 {
+	status_t st;
+
+	if (mode == PAGE_SLOT_MODE_HOME) {
+		st = page_slot_store(mode, page, s_bw, s_red, s_plane_size);
+		if (st != STATUS_OK) {
+			epd_board_unlock_planes();
+			return st;
+		}
+		epd_board_apply_home_overlay();
+		return epd_board_refresh_core(0xFFU, 0xFFU); /* 只刷不存 */
+	}
+
 	return epd_board_refresh_core(mode, page);
+}
+
+/** 只写 Flash 槽，不刷屏；调用方已持 plane_lock */
+static status_t epd_board_run_store_only(uint8_t mode, uint8_t page)
+{
+	status_t st;
+
+	if (!page_slot_is_ready()) {
+		epd_board_unlock_planes();
+		return STATUS_INVALID_STATE;
+	}
+
+	st = page_slot_store(mode, page, s_bw, s_red, s_plane_size);
+	if (st != STATUS_OK) {
+		printk("epd: store-only fail st=%d\n", (int)st);
+	} else {
+		printk("epd: store-only ok mode=%u page=%u\n", (unsigned)mode,
+		       (unsigned)page);
+	}
+	epd_board_unlock_planes();
+	return st;
 }
 #endif
 
@@ -974,6 +1087,13 @@ static void epd_worker_thread(void *a, void *b, void *c)
 		} else if (job.type == EPD_JOB_STORE_REFRESH) {
 #if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
 			st = epd_board_run_store_refresh(job.mode, job.page);
+#else
+			epd_board_unlock_planes();
+			st = STATUS_NOT_SUPPORTED;
+#endif
+		} else if (job.type == EPD_JOB_STORE_ONLY) {
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+			st = epd_board_run_store_only(job.mode, job.page);
 #else
 			epd_board_unlock_planes();
 			st = STATUS_NOT_SUPPORTED;

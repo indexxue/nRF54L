@@ -81,13 +81,22 @@ extern "C" {
 
 /* ---- 已分配 ---- */
 
-#define BLE_CMD_PING         1001U /**< 下行测试包：连通 / 冒烟 */
-#define BLE_CMD_DISPLAY      2001U /**< 下行：触发本地 demo 全刷（与平面上传无关） */
-#define BLE_CMD_DISP_BEGIN   2002U /**< 下行：开会话，声明平面 / 长度 / CRC */
-#define BLE_CMD_DISP_CHUNK   2003U /**< 下行：按 offset 写入平面分片 */
-#define BLE_CMD_DISP_REFRESH 2004U /**< 下行：CRC 通过后全刷当前缓冲 */
-#define BLE_CMD_ACK          7001U /**< 上行统一应答 */
-#define BLE_CMD_HEARTBEAT    8001U /**< 上行心跳上报 */
+#define BLE_CMD_PING            1001U /**< 下行测试包：连通 / 冒烟 */
+#define BLE_CMD_GET_SLOT_STATUS 1002U /**< 下行：请求槽位状态 → 上行 8002 */
+#define BLE_CMD_DISPLAY         2001U /**< 下行：触发本地 demo 全刷（与平面上传无关） */
+#define BLE_CMD_DISP_BEGIN      2002U /**< 下行：开会话，声明平面 / 长度 / CRC */
+#define BLE_CMD_DISP_CHUNK      2003U /**< 下行：按 offset 写入平面分片 */
+#define BLE_CMD_DISP_REFRESH    2004U /**< 下行：CRC 通过后全刷当前缓冲 */
+#define BLE_CMD_SET_GROUP_META  4001U /**< 下行：写 notes/info 组标题与内容页数 */
+#define BLE_CMD_SET_HOME_OVERLAY 4002U /**< 下行：首页叠层开关 flags(u8) */
+#define BLE_CMD_DELETE_LAST_PAGE 4003U /**< 下行：删 notes/info 最后一页 mode(u8) */
+#define BLE_CMD_ACK             7001U /**< 上行统一应答 */
+#define BLE_CMD_HEARTBEAT       8001U /**< 上行心跳上报 */
+#define BLE_CMD_SLOT_STATUS     8002U /**< 上行：槽位 / 组状态 */
+
+/** SET_HOME_OVERLAY flags */
+#define BLE_CMD_HOME_OVL_PAGES (1U << 0) /**< 叠记事/信息页数 */
+#define BLE_CMD_HOME_OVL_BATT  (1U << 1) /**< 叠电量占位 */
 
 /** ACK payload：req_cmd_id(u16 LE) + status(i32 LE) */
 #define BLE_CMD_ACK_PAYLOAD_SIZE 6U
@@ -95,8 +104,12 @@ extern "C" {
 /** HEARTBEAT payload：tick(u32 LE) + flags(u8: bit0=adv bit1=connected) */
 #define BLE_CMD_HEARTBEAT_PAYLOAD_SIZE 5U
 
-/** DISP_BEGIN payload 固定 18 B（见 ble/docs/display_plane_upload.md） */
-#define BLE_CMD_DISP_BEGIN_PAYLOAD_SIZE 18U
+/** DISP_BEGIN payload：eink_tag 等仍用 18 B；ink_panel β 用 20 B（+mode+page） */
+#define BLE_CMD_DISP_BEGIN_PAYLOAD_SIZE     18U
+#define BLE_CMD_DISP_BEGIN_PAYLOAD_SIZE_EXT 20U
+
+/** flags.bit0：REFRESH 成功写槽后是否切显该槽（仅 EXT / ink_panel） */
+#define BLE_CMD_DISP_FLAG_SHOW (1U << 0)
 
 /** DISP_CHUNK 头：plane(u8) + offset(u16) + data_len(u16) */
 #define BLE_CMD_DISP_CHUNK_HDR_SIZE 5U
@@ -107,6 +120,20 @@ extern "C" {
 
 #define BLE_CMD_DISP_PLANES_BW  (1U << 0)
 #define BLE_CMD_DISP_PLANES_RED (1U << 1)
+
+/** SET_GROUP_META：mode + count + title_len + title[32] */
+#define BLE_CMD_SET_GROUP_META_PAYLOAD_SIZE 35U
+#define BLE_CMD_GROUP_TITLE_MAX             31U
+#define BLE_CMD_GROUP_TITLE_BUF             32U
+
+/**
+ * SLOT_STATUS 固定载荷：
+ * cur_mode, cur_page, home_valid,
+ * notes_count, notes_title_len, notes_title[32],
+ * info_count, info_title_len, info_title[32],
+ * notes_valid_bits, info_valid_bits
+ */
+#define BLE_CMD_SLOT_STATUS_PAYLOAD_SIZE 73U
 
 typedef struct {
 	uint16_t cmd_id;

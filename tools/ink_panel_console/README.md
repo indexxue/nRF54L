@@ -1,25 +1,27 @@
 # ink_panel_console
 
-**ink_panel** 可视化联调台（CustomTkinter）：4.2" 预览、模/页选择、BLE 上传；DIY 图层设计关联 sibling [`../nrf_console`](../nrf_console)。
+**ink_panel 桌牌助手**（CustomTkinter）：面向运营的推送向导；协议联调收进「高级」。
+
+设计：[`../../docs/superpowers/specs/2026-11-22-ink-panel-console-ux-design.md`](../../docs/superpowers/specs/2026-11-22-ink-panel-console-ux-design.md)
 
 | 项 | 值 |
 |----|-----|
 | 默认入口 | **GUI**（`python main.py`） |
 | 设备名 | `ink_panel` |
 | 面板 | 400×300 BWR |
-| α 上传 | `BEGIN/CHUNK/REFRESH` → 固件写入 **Flash home/0** |
+| 主路径 | 连接桌牌 → 选页 → 填内容/导入图 → 推送并显示 |
 
 产品：[`../../tmp/ink_panel/PRODUCT.md`](../../tmp/ink_panel/PRODUCT.md)  
 固件：[`../../projects/ink_panel/README.md`](../../projects/ink_panel/README.md)
 
-## 界面能力
+## 界面能力（运营默认）
 
-- **Scan / Connect / PING / Disconnect**
-- 左侧选 **首页 / 记事 / 信息** + `page_id`
-- 内置模板预览（三色烟测 / 首页 / 记事 / 信息牌）
-- **导入图片** → 量化为 400×300 BWR 并预览
-- **上传到设备**
-- **打开 DIY 设计器**：启动 `nrf_console`，并写入桥接配置（filter=`ink_panel`）；画布请用 400×300
+- **一键连接桌牌**（失败可在高级里手动扫/选）
+- 左侧选 **首页 / 记事第 N 页 / 信息第 N 页**（按设备 `content_count`）
+- 侧栏 **今日三件事 / 门牌状态** 表单，实时预览
+- **推送并显示** / **仅保存到设备**
+- 空组：**启用记事（3 页）/ 启用信息（2 页）**
+- **高级**：PING、拉槽状态、组 meta、未启用页、DIY 设计器、协议日志
 
 ## 环境
 
@@ -47,7 +49,9 @@ python main.py
 python main.py cli scan
 python main.py cli ping
 python main.py cli upload --page bands
-python main.py cli upload --image ..\..\tmp\ink_panel\logo_bwr.png
+python main.py cli upload --page notes --mode notes --page-id 1
+python main.py cli upload --image ..\..\tmp\ink_panel\logo_bwr.png --mode home --page-id 0
+python main.py cli upload --page bands --no-show   # 只落槽不切显
 python main.py cli designer
 ```
 

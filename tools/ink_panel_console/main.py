@@ -106,11 +106,8 @@ async def cmd_upload(args: argparse.Namespace) -> int:
         if page_id is None:
             page_id = default_page
 
-    if not cfg.begin_with_slot and (mode != 0 or page_id != 0):
-        print(
-            "note: firmware α stores REFRESH to home/0 only; "
-            f"requested mode={MODE_NAMES.get(mode, mode)} page={page_id}"
-        )
+    if not cfg.begin_with_slot:
+        print("WARN: begin_with_slot=false → 18B BEGIN（ink_panel β 固件会拒）")
 
     client = InkPanelClient(cfg)
     try:

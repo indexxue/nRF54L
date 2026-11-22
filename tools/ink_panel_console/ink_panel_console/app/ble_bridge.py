@@ -9,7 +9,15 @@ ensure_nrf_console_on_path()
 
 from nrf_console.app.controller import BleController, UiEvent  # noqa: E402
 from nrf_console.config import AppConfig  # noqa: E402
-from nrf_console.protocol.cmds import BLE_CMD_PING  # noqa: E402
+from nrf_console.protocol.cmds import (  # noqa: E402
+    BLE_CMD_GET_SLOT_STATUS,
+    BLE_CMD_PING,
+    BLE_CMD_SET_GROUP_META,
+    BLE_CMD_SLOT_STATUS,
+    pack_set_group_meta,
+    parse_slot_status,
+    utf8_fit,
+)
 
 
 def to_app_config(cfg: InkPanelConfig) -> AppConfig:
@@ -38,4 +46,16 @@ def sync_back(ink: InkPanelConfig, app: AppConfig) -> None:
     ink.tx_uuid = app.tx_uuid
 
 
-__all__ = ["BleController", "UiEvent", "BLE_CMD_PING", "to_app_config", "sync_back"]
+__all__ = [
+    "BleController",
+    "UiEvent",
+    "BLE_CMD_PING",
+    "BLE_CMD_GET_SLOT_STATUS",
+    "BLE_CMD_SET_GROUP_META",
+    "BLE_CMD_SLOT_STATUS",
+    "pack_set_group_meta",
+    "parse_slot_status",
+    "utf8_fit",
+    "to_app_config",
+    "sync_back",
+]

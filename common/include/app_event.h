@@ -20,8 +20,11 @@ extern "C" {
 #define APP_EVT_BLE_CMD  BIT(1)
 /** GAP connect/disconnect — shallow-sleep wake. */
 #define APP_EVT_BLE_GAP  BIT(2)
+/** CAP1203 导航边沿（L/R）— cap1203_board_nav_take(). */
+#define APP_EVT_TOUCH    BIT(3)
 
-#define APP_EVT_ANY (APP_EVT_BUTTON | APP_EVT_BLE_CMD | APP_EVT_BLE_GAP)
+#define APP_EVT_ANY \
+	(APP_EVT_BUTTON | APP_EVT_BLE_CMD | APP_EVT_BLE_GAP | APP_EVT_TOUCH)
 
 /** Defined in start.c via K_EVENT_DEFINE(app_events). */
 extern struct k_event app_events;
