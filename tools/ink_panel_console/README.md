@@ -6,10 +6,12 @@
 
 | 项 | 值 |
 |----|-----|
+| 版本 | **0.4.0**（对齐固件 `firmware/0.4.0`） |
 | 默认入口 | **GUI**（`python main.py`） |
 | 设备名 | `ink_panel` |
 | 面板 | 400×300 BWR |
 | 主路径 | 连接桌牌 → 选页 → 填内容/导入图 → 推送并显示 |
+| Windows 发布包 | [`release/`](release/)：`.\release\build.cmd` → `release/dist/ink_panel_console/` |
 
 产品：[`../../tmp/ink_panel/PRODUCT.md`](../../tmp/ink_panel/PRODUCT.md)  
 固件：[`../../projects/ink_panel/README.md`](../../projects/ink_panel/README.md)

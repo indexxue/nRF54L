@@ -64,3 +64,10 @@ firmware/0.0.1/nrf54l15_factory_0.0.1_20260830_unsigned.bin
 | factory 串口 cmd | release 仍保留（协议输出，不是调试 log） |
 | BOARD / git hash | 暂不进文件名 |
 | manifest | 暂缓 |
+
+## 已发布说明
+
+| 版本 | 说明 |
+|------|------|
+| [0.4.0](./0.4.0/) | **ink_panel only**：软休眠 + 页槽；全新芯片烧该目录 `.hex` |
+| [0.3.0](./0.3.0/) | 全仓多工程归档（common Phase 1A） |

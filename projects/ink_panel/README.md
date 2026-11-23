@@ -278,6 +278,21 @@ Host：`BEGIN(mode,page,flags)` → CHUNK → `REFRESH` 写该槽；组标题/�
 .\nrf.cmd -Project ink_panel flash
 ```
 
+### 发布 0.4.0 / 全新芯片
+
+```powershell
+.\nrf.cmd -Project ink_panel release 0.4.0
+.\nrf.cmd -Project ink_panel flash
+```
+
+归档说明见 [`firmware/0.4.0/README.md`](../../firmware/0.4.0/README.md)。
+
+| 场景 | 烧哪个 |
+|------|--------|
+| **空白芯片 / 首次量产** | `firmware/0.4.0/nrf54l15_ink_panel_0.4.0_*_unsigned.hex`（merged：MCUBoot+APP） |
+| 日常开发 | `.\nrf.cmd -Project ink_panel flash` |
+| 不要单独烧空白片 | `.bin`（无 boot） |
+
 期望 RTT：`ink_panel boot` / `ink_panel ok board=...`；异常才有 `epd:` / `npm1300:` 失败行。
 
 ## 日志（J-Link RTT）
