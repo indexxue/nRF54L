@@ -8,6 +8,8 @@
 
 #include "npm1300_board.h"
 
+#include "led_scene.h"
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
@@ -23,19 +25,44 @@
 #define NPM1300_BOARD_ICHG_MA  300u
 #define NPM1300_BOARD_VTERM_MV 4200u
 
+/* BCHGCHARGESTATUS */
+#define NPM1300_CHG_BATTERYDETECTED   0x01u
+#define NPM1300_CHG_COMPLETED         0x02u
+#define NPM1300_CHG_TRICKLE           0x04u
+#define NPM1300_CHG_CC                0x08u
+#define NPM1300_CHG_CV                0x10u
+#define NPM1300_CHG_ACTIVE \
+	(NPM1300_CHG_TRICKLE | NPM1300_CHG_CC | NPM1300_CHG_CV)
+
+#define NPM1300_BOARD_VBAT_EMPTY_MV 3300u
+#define NPM1300_BOARD_VBAT_FULL_MV  4200u
+#define NPM1300_BOARD_FULL_BLINK_S  60u
+#define NPM1300_BOARD_FULL_PULSE_MS 200u
+
 npm1300_t g_npm1300;
 
 static const struct gpio_dt_spec s_epd_pwr =
 	GPIO_DT_SPEC_GET(ZUSER, epd_pwr_gpios);
 static const struct gpio_dt_spec s_touch_ldo =
 	GPIO_DT_SPEC_GET(ZUSER, touch_ldo_gpios);
+static const struct gpio_dt_spec s_led =
+	GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 
 static bool s_charge_inhibit;
 static bool s_charge_applied; /* 上次已成功使能充电 */
 static bool s_gpio_ready;
 static bool s_rails_cfg_ok;
+static bool s_led_suppress; /* 唤醒场景占灯时禁充电直写 */
+
+static uint16_t s_batt_mv;
+static uint8_t s_batt_pct;
+static uint8_t s_chg_status;
+static bool s_batt_valid;
+static bool s_vbus_cached;
+static uint8_t s_full_blink_left; /* 满电闪烁倒计时（秒） */
 
 static struct k_work_delayable s_charge_work;
+static struct k_work_delayable s_led_pulse_work;
 /* charge 周期任务与 EPD 供电同抢 I2C → 须持 s_npm_lock */
 static K_MUTEX_DEFINE(s_npm_lock);
 
@@ -116,18 +143,171 @@ static int npm1300_board_charge_apply(bool want_on)
 	return 0;
 }
 
+static uint8_t npm1300_board_vbat_to_pct(uint16_t mv)
+{
+	uint32_t span;
+	uint32_t above;
+
+	if (mv <= NPM1300_BOARD_VBAT_EMPTY_MV) {
+		return 0U;
+	}
+	if (mv >= NPM1300_BOARD_VBAT_FULL_MV) {
+		return 100U;
+	}
+	span = (uint32_t)(NPM1300_BOARD_VBAT_FULL_MV - NPM1300_BOARD_VBAT_EMPTY_MV);
+	above = (uint32_t)(mv - NPM1300_BOARD_VBAT_EMPTY_MV);
+	return (uint8_t)((above * 100U) / span);
+}
+
+static void npm1300_board_led_set(bool on)
+{
+	if (gpio_is_ready_dt(&s_led)) {
+		(void)gpio_pin_set_dt(&s_led, on ? 1 : 0); /* DT ACTIVE_LOW */
+	}
+}
+
+static void npm1300_board_led_pulse_off_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (s_led_suppress) {
+		return;
+	}
+	/* 满电脉冲结束：熄灭（仍插电且满则等下一轮） */
+	npm1300_board_led_set(false);
+}
+
+static void npm1300_board_led_update(bool vbus, bool charging, bool full)
+{
+	(void)k_work_cancel_delayable(&s_led_pulse_work);
+
+	if (s_led_suppress) {
+		return;
+	}
+
+	if (!vbus) {
+		s_full_blink_left = 0U;
+		npm1300_board_led_set(false);
+		return;
+	}
+
+	if (charging) {
+		s_full_blink_left = 0U;
+		npm1300_board_led_set(true); /* 充电常亮 */
+		return;
+	}
+
+	if (full) {
+		if (s_full_blink_left == 0U) {
+			npm1300_board_led_set(true);
+			(void)k_work_reschedule(&s_led_pulse_work,
+						 K_MSEC(NPM1300_BOARD_FULL_PULSE_MS));
+			s_full_blink_left = NPM1300_BOARD_FULL_BLINK_S;
+		} else {
+			s_full_blink_left--;
+			npm1300_board_led_set(false);
+		}
+		return;
+	}
+
+	/* 有 VBUS 但未在充也未满（如 inhibit）→ 灭 */
+	s_full_blink_left = 0U;
+	npm1300_board_led_set(false);
+}
+
+static void npm1300_board_batt_sample_locked(void)
+{
+	uint16_t mv = 0U;
+	uint8_t st = 0U;
+	npm1300_status_t adc_st;
+	npm1300_status_t chg_st;
+
+	adc_st = npm1300_adc_read_vbat_mv(&g_npm1300, &mv);
+	chg_st = npm1300_charger_get_status(&g_npm1300, &st);
+	if (adc_st == NPM1300_OK) {
+		s_batt_mv = mv;
+		s_batt_pct = npm1300_board_vbat_to_pct(mv);
+		s_batt_valid = true;
+	}
+	if (chg_st == NPM1300_OK) {
+		s_chg_status = st;
+	}
+}
+
 static void npm1300_board_charge_sync(void)
 {
 	bool want;
+	bool vbus;
+	bool charging;
+	bool full;
 
 	k_mutex_lock(&s_npm_lock, K_FOREVER);
-	want = npm1300_board_vbus_present() && !s_charge_inhibit;
+	vbus = npm1300_board_vbus_present();
+	s_vbus_cached = vbus;
+	want = vbus && !s_charge_inhibit;
 	if (want != s_charge_applied) {
 		if (npm1300_board_charge_apply(want) != 0) {
 			printk("npm1300 chg sync fail want=%d\n", (int)want);
 		}
 	}
+	npm1300_board_batt_sample_locked();
+	charging = ((s_chg_status & NPM1300_CHG_ACTIVE) != 0U);
+	full = ((s_chg_status & NPM1300_CHG_COMPLETED) != 0U);
 	k_mutex_unlock(&s_npm_lock);
+
+	npm1300_board_led_update(vbus, charging, full);
+
+	if (s_batt_valid) {
+		static uint8_t s_log_div;
+
+		if (++s_log_div >= 10U) { /* ~10s */
+			s_log_div = 0U;
+			printk("npm1300: batt %umV %u%% vbus=%d chg=0x%02x%s%s\n",
+			       (unsigned)s_batt_mv, (unsigned)s_batt_pct, (int)vbus,
+			       (unsigned)s_chg_status, charging ? " charging" : "",
+			       full ? " full" : "");
+		}
+	}
+}
+
+bool npm1300_board_vbus_get(void)
+{
+	bool vbus;
+
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
+	vbus = s_vbus_cached;
+	k_mutex_unlock(&s_npm_lock);
+	return vbus;
+}
+
+void npm1300_board_led_suppress_set(bool suppress)
+{
+	s_led_suppress = suppress;
+	if (suppress) {
+		(void)k_work_cancel_delayable(&s_led_pulse_work);
+	}
+}
+
+bool npm1300_board_batt_get(uint16_t *mv_out, uint8_t *pct_out, bool *charging_out,
+			    bool *full_out)
+{
+	bool ok;
+
+	k_mutex_lock(&s_npm_lock, K_FOREVER);
+	ok = s_batt_valid;
+	if (mv_out != NULL) {
+		*mv_out = s_batt_mv;
+	}
+	if (pct_out != NULL) {
+		*pct_out = s_batt_pct;
+	}
+	if (charging_out != NULL) {
+		*charging_out = ((s_chg_status & NPM1300_CHG_ACTIVE) != 0U);
+	}
+	if (full_out != NULL) {
+		*full_out = ((s_chg_status & NPM1300_CHG_COMPLETED) != 0U);
+	}
+	k_mutex_unlock(&s_npm_lock);
+	return ok;
 }
 
 static int npm1300_board_gpio_init(void)
@@ -369,7 +549,10 @@ static void npm1300_board_charge_work_fn(struct k_work *work)
 
 static void npm1300_board_workers_start(void)
 {
+	/* 开机场景 CYCLE_ALWAYS，否则会覆盖充电 LED */
+	led_scene_cancel(LED_SCENE_ID_BOOTUP);
 	k_work_init_delayable(&s_charge_work, npm1300_board_charge_work_fn);
+	k_work_init_delayable(&s_led_pulse_work, npm1300_board_led_pulse_off_fn);
 	(void)k_work_schedule(&s_charge_work, K_SECONDS(1));
 }
 

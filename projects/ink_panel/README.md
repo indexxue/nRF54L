@@ -17,7 +17,185 @@ EVT 自有板。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)
 
 α / β / γ **DONE**：W25Q 页槽、BEGIN mode/page、CAP1203 L 翻页 / R 切模。  
 组 meta（IPS2）：notes/info **page0 不显示**；标题 ≤31 UTF-8；`content_count` 管翻页；连上推 **8002 SLOT_STATUS**。  
-更后：NFC、字库描字、睡眠。
+软休眠 v1 **DONE**（关外设软睡，非 System OFF）。更后：NFC、字库描字、更深休眠。
+
+## 功能逻辑图（给后来者）
+
+> 下列图为 **产品层认知模型**；细节以 `src/app.c`、`board/*_board.*` 为准。
+
+### 1. 模块与数据流
+
+```mermaid
+flowchart TB
+  subgraph Host["手机 / ink_panel_console"]
+    BLEH[BLE Central]
+  end
+
+  subgraph FW["ink_panel 固件"]
+    APP["app.c\n按键·触摸·CMD·PM"]
+    BLE["ble/\nGAP + GATT CMD"]
+    EPD["epd_board\njob 队列 + worker"]
+    SLOT["page_slot\nIPS2 meta + 平面槽"]
+    CAP["cap1203_board\nALERT→work→TOUCH"]
+    NPM["npm1300_board\nLDO/充电/VBUS/LED"]
+    W25["w25q_board\nSPIM00 NOR"]
+  end
+
+  subgraph HW["板级外设"]
+    PANEL[EPD 4.2 BWR]
+    TOUCH[CAP1203]
+    FLASH[W25Q64]
+    PMIC[nPM1300]
+    BTN[BTN1 USER]
+  end
+
+  BLEH <--> BLE
+  BLE --> APP
+  BTN --> APP
+  CAP --> APP
+  APP -->|show/store/refresh 入队| EPD
+  APP --> NPM
+  EPD --> PANEL
+  EPD --> SLOT
+  SLOT --> W25
+  W25 --> FLASH
+  CAP --> TOUCH
+  NPM --> PMIC
+  NPM -->|LDO1/LDSW2| TOUCH
+  NPM -->|LDSW2 3.3V| PANEL
+```
+
+### 2. 运行时线程与主环
+
+```mermaid
+flowchart LR
+  subgraph Main["main / app_run 20ms"]
+    SP[start_poll\nLED·button]
+    AP[app_poll\n按键·触摸·BLE·PM]
+  end
+
+  subgraph Async["异步"]
+    EW[epd worker\n秒级刷屏]
+    CW[npm charge work 1s]
+    BW[batt overlay 5min]
+    HB[BLE HEARTBEAT 20s]
+  end
+
+  SP --> AP
+  AP -->|K_NO_WAIT 入队| EW
+  CW -.-> NPM1300[VBUS/电量/充电灯]
+  BW -.-> EW
+```
+
+硬约束（与仓库门禁一致）：
+
+- GATT / 按键 ISR / CAP ALERT：**只 ingress**（事件/work），禁止 sleep、刷屏、写 Settings  
+- 刷屏只在 **EPD worker**；main 只 `*_request()` 入队  
+- 进/出软休眠可阻塞，但须先处理完 busy / 拒新 job
+
+### 3. 本机导航（触摸 + 当前显）
+
+```mermaid
+stateDiagram-v2
+  [*] --> HOME: 开机刷 home/0
+
+  HOME --> NOTES1: 触摸 R
+  NOTES1 --> INFO1: 触摸 R
+  INFO1 --> NOTES1: 触摸 R
+
+  NOTES1 --> HOME: 触摸 HOME(CS3)
+  INFO1 --> HOME: 触摸 HOME(CS3)
+
+  state NOTES1 {
+    [*] --> Npage
+    Npage --> Npage: 触摸 L\n1..content_count 循环
+  }
+  state INFO1 {
+    [*] --> Ipage
+    Ipage --> Ipage: 触摸 L\n1..content_count 循环
+  }
+```
+
+| 输入 | 行为 |
+|------|------|
+| L | 仅 notes/info；按 `content_count` 翻页；空槽→白屏 |
+| R | home→notes@1↔info@1（不再经 R 回 home） |
+| HOME | 回 LOGO；已在 home 则忽略 |
+| BTN1 单击 ACTIVE | 连上→断连；未连→开广播 |
+| BTN1 单击 SLEEP | **唤醒**（不切 BLE） |
+| BTN1 长按 5s | `boot_mode=factory` + 冷复位 |
+
+### 4. BLE 平面上传 → 页槽
+
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant A as app.c
+  participant E as epd worker
+  participant S as page_slot/W25Q
+
+  H->>A: BEGIN(20B mode/page/flags)
+  A->>A: lock planes / 校验尺寸
+  loop
+    H->>A: CHUNK
+    A->>A: 写入 BW/RED 缓冲
+  end
+  H->>A: REFRESH
+  A->>E: store_refresh 入队 K_NO_WAIT
+  E->>E: prepare 开轨 / init
+  E->>E: 全刷面板
+  E->>S: 成功则写对应槽
+  Note over A,E: flags.SHOW=1 时同步 s_view_*
+```
+
+连上且 TX Notify 开：设备主动推 **8002 SLOT_STATUS**。刷屏中 PING 仍 ACK；BEGIN/CHUNK/REFRESH 忙则 `INVALID_STATE`。
+
+### 5. 软休眠状态机（v1）
+
+```mermaid
+stateDiagram-v2
+  [*] --> ACTIVE: boot
+
+  ACTIVE --> SLEEP: 空闲≥120s\n且无 VBUS\n且拔线宽限≥20s\n且 EPD 不忙
+  SLEEP --> ACTIVE: USER 单击\n或插入 VBUS
+
+  state ACTIVE {
+    [*] --> Run
+    Run --> BattArm: VBUS + HOME + OVL_BATT + !full
+    BattArm --> Run: 每 5min 刷 HOME 电量\n（不 bump 空闲计时）
+    BattArm --> Run: 满电 / 离 HOME / 关 BATT / 拔电
+  }
+
+  state SLEEP {
+    [*] --> Off
+    note right of Off
+      关 EPD 轨+脚 Hi-Z
+      关触摸 LDO
+      W25Q Deep PD
+      断连 + 停广播
+      LED 灭
+    end note
+  }
+```
+
+进睡顺序（失败则 5s 退避，不动 BLE）：**EPD suspend → CAP → W25Q → 停 BLE**。  
+出睡：开 Flash/EPD/CAP → LED 1Hz×4s → 再广播；外设 resume 失败会 `s_wake_incomplete` 在 poll 里重试。  
+SLEEP 中触摸/BLE CMD **丢弃**；EPD job **拒入队**（禁止 worker 偷偷开轨）。
+
+### 6. 电源轨（nPM1300）
+
+```mermaid
+flowchart TB
+  BUCK[BUCK1 ~3.0V] --> LDO1[LDO1 3.0V 触摸]
+  BUCK --> LDO2[LDSW2 LDO 3.3V EPD]
+  LDO1 --> CAP1203
+  LDO2 --> EPD
+  VBUS[VBUS] --> CHG[充电器 300mA/4.2V]
+  CHG --> BAT[电池]
+```
+
+- 刷屏窗口：`charge_inhibit` 暂关充，减轻与 LDO2 抢电流  
+- 产品策略：有 **VBUS 不进软休眠**；充电灯与唤醒灯用 `led_suppress` 仲裁  
 
 ## 板级（EVT 网表）
 
@@ -38,8 +216,10 @@ EVT 自有板。无线链路为 **BLE Peripheral**（仓库 [`ble/`](../../ble/)
 | 操作 | 行为 |
 |------|------|
 | 触摸 **L**（CAP1203 CS1） | notes/info 在 **1..content_count** 循环；home / count=0 → 忽略；空槽 → 白屏 |
-| 触摸 **R**（CAP1203 CS2） | 切模 **home → notes@1 → info@1 → home** |
-| BTN1 **单击** | 已连接 → **断连**（随后自动再广播）；未连接 → **开广播** |
+| 触摸 **R**（CAP1203 CS2） | 切模 **home → notes@1 ↔ info@1**（回 LOGO 用 HOME） |
+| 触摸 **HOME**（CS3） | 回 **home/0**；已在 home → 忽略 |
+| BTN1 **单击**（ACTIVE） | 已连接 → **断连**（随后自动再广播）；未连接 → **开广播** |
+| BTN1 **单击**（SLEEP） | **唤醒**软休眠（开轨+触摸+广播；LED 1Hz×4s） |
 | BTN1 **双击** | 预留 |
 | BTN1 长按 ≈5s | `boot_mode=factory` + 冷复位（须 slot1 已烧 factory） |
 

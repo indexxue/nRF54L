@@ -28,11 +28,15 @@ static const struct gpio_dt_spec s_alert =
 static struct gpio_callback s_alert_cb;
 static struct k_work s_touch_work;
 static struct k_work_delayable s_release_work;
+static struct k_work_sync s_touch_sync;
+static struct k_work_sync s_release_sync;
 
 static uint8_t s_last_mask;
 static bool s_have_last;
 static bool s_irq_ok;
+static bool s_cb_added;
 static bool s_ready;
+static bool s_suspended;
 static atomic_t s_nav_pending;
 static uint8_t s_read_fail_streak;
 
@@ -212,14 +216,25 @@ static int cap1203_board_irq_init(void)
 		return -3;
 	}
 
-	gpio_init_callback(&s_alert_cb, cap1203_board_alert_isr, BIT(s_alert.pin));
-	ret = gpio_add_callback(s_alert.port, &s_alert_cb);
-	if (ret != 0) {
-		return -4;
+	if (!s_cb_added) {
+		gpio_init_callback(&s_alert_cb, cap1203_board_alert_isr, BIT(s_alert.pin));
+		ret = gpio_add_callback(s_alert.port, &s_alert_cb);
+		if (ret != 0) {
+			return -4;
+		}
+		s_cb_added = true;
 	}
 
 	s_irq_ok = true;
 	return 0;
+}
+
+static void cap1203_board_irq_disable(void)
+{
+	if (gpio_is_ready_dt(&s_alert)) {
+		(void)gpio_pin_interrupt_configure_dt(&s_alert, GPIO_INT_DISABLE);
+	}
+	s_irq_ok = false;
 }
 
 int cap1203_board_bringup(void)
@@ -239,19 +254,27 @@ int cap1203_board_bringup(void)
 	};
 	cap1203_status_t st = CAP1203_ERROR_I2C;
 	int attempt;
+	static bool s_work_inited;
 
 	s_ready = false;
+	s_suspended = false;
 	s_have_last = false;
 	s_last_mask = 0U;
-	s_irq_ok = false;
 	s_read_fail_streak = 0U;
 	atomic_set(&s_nav_pending, 0);
 
-	k_work_init(&s_touch_work, cap1203_board_touch_work_fn);
-	k_work_init_delayable(&s_release_work, cap1203_board_release_work_fn);
+	if (!s_work_inited) {
+		k_work_init(&s_touch_work, cap1203_board_touch_work_fn);
+		k_work_init_delayable(&s_release_work, cap1203_board_release_work_fn);
+		s_work_inited = true;
+	}
+	(void)k_work_cancel_sync(&s_touch_work, &s_touch_sync);
+	(void)k_work_cancel_delayable_sync(&s_release_work, &s_release_sync);
 
 	if (!device_is_ready(i2c)) {
 		printk("cap1203 i2c device not ready\n");
+		npm1300_board_touch_power_set(false);
+		s_suspended = true;
 		return -1;
 	}
 
@@ -276,18 +299,24 @@ int cap1203_board_bringup(void)
 	if (st != CAP1203_OK) {
 		printk("cap1203 bringup fail: no ACK @0x28 — check VDD_Touch / ADDR\n");
 		npm1300_board_touch_rail_log("init-fail");
+		npm1300_board_touch_power_set(false);
+		s_suspended = true;
 		return -2;
 	}
 
 	st = cap1203_configure(&g_cap1203, &setup);
 	if (st != CAP1203_OK) {
 		printk("cap1203 cfg=%d (%s)\n", (int)st, cap1203_st_str(st));
+		npm1300_board_touch_power_set(false);
+		s_suspended = true;
 		return -3;
 	}
 
 	st = cap1203_reg_write(&g_cap1203, CAP1203_REG_AVG_SAMP_CFG, CAP1203_AVG_SAMP_FAST);
 	if (st != CAP1203_OK) {
 		printk("cap1203 avg=%d (%s)\n", (int)st, cap1203_st_str(st));
+		npm1300_board_touch_power_set(false);
+		s_suspended = true;
 		return -4;
 	}
 
@@ -306,6 +335,9 @@ int cap1203_board_bringup(void)
 
 void cap1203_board_poll(void)
 {
+	if (s_suspended || !s_ready) {
+		return;
+	}
 	/* 有 IRQ 也轮询：丢边沿时仍能打 CLICK 日志并导航 */
 	cap1203_board_touch_handle();
 }
@@ -313,4 +345,37 @@ void cap1203_board_poll(void)
 uint8_t cap1203_board_nav_take(void)
 {
 	return (uint8_t)atomic_set(&s_nav_pending, 0);
+}
+
+bool cap1203_board_is_ready(void)
+{
+	return s_ready && !s_suspended;
+}
+
+void cap1203_board_suspend(void)
+{
+	cap1203_board_irq_disable();
+	(void)k_work_cancel_sync(&s_touch_work, &s_touch_sync);
+	(void)k_work_cancel_delayable_sync(&s_release_work, &s_release_sync);
+	s_ready = false;
+	s_have_last = false;
+	g_cap1203.initialized = false;
+	/* 无论是否已 suspended，都强制关轨（resume 失败后 flag 可能已置位） */
+	npm1300_board_touch_power_set(false);
+	s_suspended = true;
+	printk("cap1203: suspend\n");
+}
+
+int cap1203_board_resume(void)
+{
+	int ret;
+
+	if (!s_suspended && s_ready) {
+		return 0;
+	}
+
+	printk("cap1203: resume\n");
+	ret = cap1203_board_bringup();
+	/* bringup 失败路径已关 LDO 并置 s_suspended */
+	return ret;
 }

@@ -39,6 +39,9 @@ static struct spi_config s_spi_cfg;
 static uint8_t s_tx_chunk[W25Q_SPI_CHUNK];
 static uint8_t s_rx_chunk[W25Q_SPI_CHUNK];
 static uint32_t s_spi_err_count;
+static bool s_suspended;
+
+#define W25Q_BOARD_CMD_POWER_DOWN 0xB9U
 
 static void w25q_board_set_cs(uint8_t level)
 {
@@ -61,6 +64,9 @@ static int w25q_board_spi_xfer(const uint8_t *tx, uint8_t *rx, uint16_t len)
 	uint16_t off = 0U;
 
 	if ((tx == NULL) || (len == 0U)) {
+		return -1;
+	}
+	if (s_suspended) {
 		return -1;
 	}
 	if (!device_is_ready(s_spi)) {
@@ -167,11 +173,55 @@ int w25q_board_init(void)
 
 	k_msleep(2);
 
+	s_suspended = false;
+
 	st = w25q_init(&g_w25q, &cfg);
 	if (st != W25Q_OK) {
 		printk("w25q: init fail st=%d\n", (int)st);
 		return -1;
 	}
 
+	return 0;
+}
+
+void w25q_board_suspend(void)
+{
+	uint8_t cmd = W25Q_BOARD_CMD_POWER_DOWN;
+
+	if (s_suspended || !w25q_is_initialized(&g_w25q)) {
+		w25q_board_set_cs(1U);
+		s_suspended = true;
+		return;
+	}
+
+	/* Deep Power-Down：短事务，绕过 s_suspended 守卫 */
+	w25q_board_set_cs(0U);
+	s_suspended = false;
+	(void)w25q_board_spi_xfer(&cmd, NULL, 1U);
+	w25q_board_set_cs(1U);
+	s_suspended = true;
+	printk("w25q: suspend (DPD)\n");
+}
+
+int w25q_board_resume(void)
+{
+	uint8_t cmd = W25Q_CMD_RELEASE_POWERDOWN;
+
+	if (!s_suspended) {
+		return 0;
+	}
+
+	w25q_board_set_cs(0U);
+	s_suspended = false;
+	if (w25q_board_spi_xfer(&cmd, NULL, 1U) != 0) {
+		w25q_board_set_cs(1U);
+		s_suspended = true;
+		printk("w25q: resume xfer fail\n");
+		return -1;
+	}
+	w25q_board_set_cs(1U);
+	/* tRES1：Release 后最多约 3µs，留余量 */
+	k_msleep(1);
+	printk("w25q: resume\n");
 	return 0;
 }

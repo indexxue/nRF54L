@@ -5,6 +5,10 @@
  *       SET_GROUP_META / HEARTBEAT / SLOT_STATUS
  * 触摸：CS1=L 按 content_count 翻页；CS2=R 切模 home→notes@1→info@1；开机刷 home/0。
  * BTN1 单击断连或再广播，长按 5s → factory（不对屏）。
+ * 软休眠（非 System OFF）：
+ *   ACTIVE ──120s 空闲且无 VBUS（拔线后再等 20s）──► SLEEP
+ *   SLEEP  ──USER 单击 / 插 VBUS──► 开轨+CAP+广播，LED 1Hz×4s
+ *   充电+HOME+OVL_BATT：每 5min 刷电量至满（不进睡）
  */
 
 #include "start.h"
@@ -26,6 +30,7 @@
 #include "ble_evt.h"
 #include "board.h"
 #include "button.h"
+#include "led_scene.h"
 #include "npm1300_board.h"
 #include "nvs.h"
 
@@ -45,11 +50,58 @@
 #define APP_HB_FLAG_ADV  (1U << 0)
 #define APP_HB_FLAG_CONN (1U << 1)
 
-#define APP_LOOP_MS      20U
-#define APP_HB_PERIOD_MS 20000U
+#define APP_LOOP_MS           20U
+#define APP_HB_PERIOD_MS      20000U
+#define APP_IDLE_SLEEP_MS      120000U
+#define APP_VBUS_GRACE_MS      20000U
+#define APP_WAKE_LED_MS        4000U
+#define APP_BATT_OVL_PERIOD_MS (5U * 60U * 1000U)
+#define APP_SLEEP_WAIT_BUSY_MS 5000U
+#define APP_SLEEP_RETRY_MS     5000U
+
+typedef enum {
+	APP_PM_ACTIVE = 0,
+	APP_PM_SLEEP,
+} app_pm_state_t;
 
 static struct k_work_delayable s_hb_work;
+static struct k_work_delayable s_wake_led_work;
+static struct k_work_delayable s_batt_ovl_work;
+static struct k_work_sync s_wake_led_sync;
+static struct k_work_sync s_batt_ovl_sync;
 static uint32_t s_hb_seq;
+
+static app_pm_state_t s_pm = APP_PM_ACTIVE;
+static uint32_t s_last_activity_ms;
+static uint32_t s_vbus_lost_ms;
+static uint32_t s_sleep_retry_after_ms; /* 进睡失败退避，防 BLE 抖动 */
+static bool s_vbus_grace_armed;
+static bool s_vbus_was;
+static bool s_batt_ovl_armed;
+static bool s_wake_incomplete; /* resume 部分失败，poll 里重试 */
+
+static void app_activity_bump(void)
+{
+	s_last_activity_ms = k_uptime_get_32();
+}
+
+static void app_wake_led_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	led_scene_cancel(LED_SCENE_ID_TRIGGER);
+	npm1300_board_led_suppress_set(false);
+	npm1300_board_poll_charge();
+}
+
+static void app_wake_led_start(void)
+{
+	npm1300_board_led_suppress_set(true);
+	/* TRIGGER：500ms 灭/亮 ≈1Hz，单灯走 R 通道；4s 后 cancel */
+	led_scene_run(LED_SCENE_ID_TRIGGER);
+	(void)k_work_reschedule(&s_wake_led_work, K_MSEC(APP_WAKE_LED_MS));
+}
+
+static void app_batt_ovl_reschedule(void);
 
 #if IS_ENABLED(CONFIG_INK_PANEL_EPD) && IS_ENABLED(CONFIG_INK_PANEL_W25Q)
 static atomic_t s_slot_status_pending;
@@ -64,6 +116,7 @@ static void app_view_set(uint8_t mode, uint8_t page)
 {
 	s_view_mode = mode;
 	s_view_page = page;
+	app_batt_ovl_reschedule();
 }
 
 static status_t app_view_show(uint8_t mode, uint8_t page)
@@ -79,6 +132,7 @@ static status_t app_view_show(uint8_t mode, uint8_t page)
 	st = epd_board_show_slot_request(mode, page);
 	if (st == STATUS_OK) {
 		app_view_set(mode, page);
+		app_activity_bump();
 		printk("app: view mode=%u page=%u\n", (unsigned)mode, (unsigned)page);
 	} else {
 		printk("app: view show fail st=%d mode=%u page=%u\n", (int)st,
@@ -539,6 +593,12 @@ static void app_handle_ble_cmds(void)
 	status_t st;
 
 	while (ble_cmd_fetch(&msg)) {
+		/* SLEEP 下丢弃（进睡窗口残留）；勿在未唤醒时入队刷屏 */
+		if (s_pm == APP_PM_SLEEP) {
+			printk("app: BLE cmd dropped (SLEEP) id=%u\n", (unsigned)msg.cmd_id);
+			continue;
+		}
+		app_activity_bump();
 		switch (msg.cmd_id) {
 		case BLE_CMD_PING:
 			app_ack(BLE_CMD_PING, STATUS_OK);
@@ -566,6 +626,7 @@ static void app_handle_ble_cmds(void)
 					if (st == STATUS_OK) {
 						app_view_set(PAGE_SLOT_MODE_HOME, 0U);
 					}
+					app_batt_ovl_reschedule();
 				}
 			}
 			app_ack(BLE_CMD_SET_HOME_OVERLAY, st);
@@ -643,6 +704,297 @@ static void app_ble_heartbeat_start(void)
 	(void)k_work_schedule(&s_hb_work, K_MSEC(APP_HB_PERIOD_MS));
 }
 
+/** 仅清武装位；work 自身内用，避免 cancel_sync 自死锁 */
+static void app_batt_ovl_disarm(void)
+{
+	s_batt_ovl_armed = false;
+}
+
+static void app_batt_ovl_stop(void)
+{
+	app_batt_ovl_disarm();
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD) && IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	(void)k_work_cancel_delayable_sync(&s_batt_ovl_work, &s_batt_ovl_sync);
+#endif
+}
+
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD) && IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+static void app_batt_ovl_work_fn(struct k_work *work)
+{
+	bool full = false;
+	status_t st;
+
+	ARG_UNUSED(work);
+
+	if (!s_batt_ovl_armed || (s_pm != APP_PM_ACTIVE)) {
+		app_batt_ovl_disarm();
+		return;
+	}
+	if (!npm1300_board_vbus_get()) {
+		app_batt_ovl_disarm();
+		return;
+	}
+	if (s_view_mode != PAGE_SLOT_MODE_HOME) {
+		app_batt_ovl_disarm();
+		return;
+	}
+	if ((page_slot_home_overlay_get() & PAGE_SLOT_OVL_BATT) == 0U) {
+		app_batt_ovl_disarm();
+		return;
+	}
+	if (npm1300_board_batt_get(NULL, NULL, NULL, &full) && full) {
+		printk("app: batt overlay stop (full)\n");
+		app_batt_ovl_disarm();
+		return;
+	}
+
+	/* 系统刷新：不 bump 空闲计时，避免拖长拔电后的可睡时刻 */
+	st = epd_board_show_slot_request(PAGE_SLOT_MODE_HOME, 0U);
+	if (st == STATUS_OK) {
+		printk("app: batt overlay refresh\n");
+	} else {
+		printk("app: batt overlay refresh fail st=%d\n", (int)st);
+	}
+	if (s_batt_ovl_armed && (s_pm == APP_PM_ACTIVE)) {
+		(void)k_work_reschedule(&s_batt_ovl_work, K_MSEC(APP_BATT_OVL_PERIOD_MS));
+	}
+}
+
+static void app_batt_ovl_reschedule(void)
+{
+	bool full = false;
+
+	if (s_pm != APP_PM_ACTIVE) {
+		app_batt_ovl_stop();
+		return;
+	}
+	if (!npm1300_board_vbus_get() || (s_view_mode != PAGE_SLOT_MODE_HOME) ||
+	    ((page_slot_home_overlay_get() & PAGE_SLOT_OVL_BATT) == 0U)) {
+		app_batt_ovl_stop();
+		return;
+	}
+	if (npm1300_board_batt_get(NULL, NULL, NULL, &full) && full) {
+		app_batt_ovl_stop();
+		return;
+	}
+
+	/* 已武装则勿 reschedule，否则主循环会不断把 5min 推掉 */
+	if (s_batt_ovl_armed) {
+		return;
+	}
+	s_batt_ovl_armed = true;
+	printk("app: batt overlay arm 5min\n");
+	(void)k_work_reschedule(&s_batt_ovl_work, K_MSEC(APP_BATT_OVL_PERIOD_MS));
+}
+#else
+static void app_batt_ovl_reschedule(void)
+{
+}
+#endif
+
+static void app_pm_enter_sleep(void)
+{
+	uint32_t waited = 0U;
+	status_t st;
+
+	if (s_pm == APP_PM_SLEEP) {
+		return;
+	}
+
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
+	while (epd_board_is_busy() && (waited < APP_SLEEP_WAIT_BUSY_MS)) {
+		k_msleep(50);
+		waited += 50U;
+	}
+	if (epd_board_is_busy()) {
+		printk("app: sleep deferred (epd busy)\n");
+		return;
+	}
+	if (s_disp.state != APP_DISP_IDLE) {
+		printk("app: sleep deferred (disp session)\n");
+		return;
+	}
+#endif
+
+	app_batt_ovl_stop();
+	(void)k_work_cancel_delayable_sync(&s_wake_led_work, &s_wake_led_sync);
+	led_scene_cancel(LED_SCENE_ID_TRIGGER);
+	npm1300_board_led_suppress_set(false);
+
+	/*
+	 * 先关 EPD 轨；失败则退避，绝不先动 BLE/CAP（避免每 20ms 抖动）。
+	 */
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
+	st = epd_board_rails_suspend();
+	if (st != STATUS_OK) {
+		printk("app: sleep epd suspend st=%d — backoff\n", (int)st);
+		s_sleep_retry_after_ms = k_uptime_get_32() + APP_SLEEP_RETRY_MS;
+		app_activity_bump();
+		return;
+	}
+#endif
+#if IS_ENABLED(CONFIG_INK_PANEL_CAP1203)
+	cap1203_board_suspend();
+#endif
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	w25q_board_suspend();
+#endif
+
+	ble_adv_set_restart_on_disconnect(false);
+	if (ble_is_connected()) {
+		(void)ble_disconnect();
+	}
+	st = ble_adv_stop();
+	if (st != STATUS_OK) {
+		printk("app: sleep adv_stop st=%d\n", (int)st);
+	}
+
+	npm1300_board_led_suppress_set(false);
+	led_scene_led_direct_set(LED_SCENE_LED_0, false);
+	s_vbus_grace_armed = false;
+	s_wake_incomplete = false;
+	s_sleep_retry_after_ms = 0U;
+	s_pm = APP_PM_SLEEP;
+	printk("app: SLEEP enter\n");
+}
+
+static void app_pm_retry_wake_peripherals(void)
+{
+	bool incomplete = false;
+
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	if (w25q_board_resume() != 0) {
+		printk("app: w25q resume retry fail\n");
+		incomplete = true;
+	}
+#endif
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
+	if (epd_board_rails_suspended()) {
+		if (epd_board_rails_resume() != STATUS_OK) {
+			printk("app: epd resume retry fail\n");
+			incomplete = true;
+		}
+	}
+#endif
+#if IS_ENABLED(CONFIG_INK_PANEL_CAP1203)
+	if (!cap1203_board_is_ready()) {
+		if (cap1203_board_resume() != 0) {
+			printk("app: cap1203 resume retry fail\n");
+			incomplete = true;
+		}
+	}
+#endif
+	s_wake_incomplete = incomplete;
+}
+
+static void app_pm_exit_sleep(void)
+{
+	status_t st;
+	bool incomplete = false;
+
+	if (s_pm != APP_PM_SLEEP) {
+		return;
+	}
+
+	printk("app: SLEEP exit\n");
+
+#if IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	if (w25q_board_resume() != 0) {
+		printk("app: w25q resume fail\n");
+		incomplete = true;
+	}
+#endif
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
+	st = epd_board_rails_resume();
+	if (st != STATUS_OK) {
+		printk("app: epd resume st=%d\n", (int)st);
+		incomplete = true;
+	}
+#endif
+#if IS_ENABLED(CONFIG_INK_PANEL_CAP1203)
+	if (cap1203_board_resume() != 0) {
+		printk("app: cap1203 resume fail\n");
+		incomplete = true;
+	}
+#endif
+
+	app_wake_led_start();
+
+	ble_adv_set_restart_on_disconnect(true);
+	st = ble_adv_start();
+	if (st != STATUS_OK) {
+		printk("app: wake adv_start st=%d\n", (int)st);
+	}
+
+	s_pm = APP_PM_ACTIVE;
+	s_wake_incomplete = incomplete;
+	app_activity_bump();
+	app_batt_ovl_reschedule();
+}
+
+static bool app_pm_can_enter_sleep(void)
+{
+	uint32_t now;
+
+	if (s_pm != APP_PM_ACTIVE) {
+		return false;
+	}
+	if (s_wake_incomplete) {
+		return false;
+	}
+	if (npm1300_board_vbus_get()) {
+		return false;
+	}
+
+	now = k_uptime_get_32();
+	if ((s_sleep_retry_after_ms != 0U) && (now < s_sleep_retry_after_ms)) {
+		return false;
+	}
+	if ((now - s_last_activity_ms) < APP_IDLE_SLEEP_MS) {
+		return false;
+	}
+	if (s_vbus_grace_armed && ((now - s_vbus_lost_ms) < APP_VBUS_GRACE_MS)) {
+		return false;
+	}
+
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD)
+	if (epd_board_is_busy() || (s_disp.state != APP_DISP_IDLE)) {
+		return false;
+	}
+#endif
+	return true;
+}
+
+static void app_pm_poll(void)
+{
+	bool vbus = npm1300_board_vbus_get();
+
+	if (vbus && !s_vbus_was) {
+		s_vbus_grace_armed = false;
+		if (s_pm == APP_PM_SLEEP) {
+			app_pm_exit_sleep();
+		}
+		app_batt_ovl_reschedule();
+	} else if (!vbus && s_vbus_was) {
+		s_vbus_lost_ms = k_uptime_get_32();
+		s_vbus_grace_armed = true;
+		app_batt_ovl_stop();
+	}
+	s_vbus_was = vbus;
+
+	if ((s_pm == APP_PM_ACTIVE) && s_wake_incomplete) {
+		app_pm_retry_wake_peripherals();
+	}
+
+	if (app_pm_can_enter_sleep()) {
+		app_pm_enter_sleep();
+	}
+
+	if (s_pm == APP_PM_ACTIVE) {
+		app_batt_ovl_reschedule();
+	}
+}
+
 static void app_handle_button(void)
 {
 	btn_id_e id;
@@ -662,6 +1014,12 @@ static void app_handle_button(void)
 	if (ev == BTN_EVENT_SINGLE_CLICK) {
 		status_t st;
 
+		if (s_pm == APP_PM_SLEEP) {
+			app_pm_exit_sleep();
+			return;
+		}
+
+		app_activity_bump();
 		if (ble_is_connected()) {
 			st = ble_disconnect();
 			if (st != STATUS_OK) {
@@ -678,6 +1036,9 @@ static void app_handle_button(void)
 	}
 
 	if (ev == BTN_EVENT_LONG_PRESS) {
+		if (s_pm == APP_PM_SLEEP) {
+			app_pm_exit_sleep();
+		}
 		if (!nvs_boot_mode_set(NVS_BOOT_MODE_FACTORY)) {
 			printk("app: factory boot_mode set fail\n");
 			return;
@@ -701,6 +1062,13 @@ static void app_handle_touch(void)
 		return;
 	}
 
+	/* SLEEP 触摸电源已关；残留事件直接丢弃 */
+	if (s_pm == APP_PM_SLEEP) {
+		printk("app: touch dropped (SLEEP)\n");
+		return;
+	}
+
+	app_activity_bump();
 	printk("app: CAP click%s%s%s\n",
 	       ((nav & CAP1203_NAV_L) != 0U) ? " L" : "",
 	       ((nav & CAP1203_NAV_R) != 0U) ? " R" : "",
@@ -738,7 +1106,7 @@ static void app_poll_ble_events(void)
 #endif
 }
 
-/** main 环一拍：按键 / 触摸 / BLE CMD（不阻塞；心跳走独立 work） */
+/** main 环一拍：按键 / 触摸 / BLE CMD / 软休眠（不阻塞；心跳走独立 work） */
 static void app_poll(void)
 {
 	app_handle_button();
@@ -747,7 +1115,7 @@ static void app_poll(void)
 		static uint8_t s_cap_poll_div;
 
 		app_handle_touch();
-		/* ~100ms 轮询兜底（APP_LOOP_MS=20） */
+		/* ~100ms 轮询兜底（APP_LOOP_MS=20）；SLEEP 内 poll 自短路 */
 		if (++s_cap_poll_div >= 5U) {
 			s_cap_poll_div = 0U;
 			cap1203_board_poll();
@@ -755,6 +1123,7 @@ static void app_poll(void)
 	}
 #endif
 	app_poll_ble_events();
+	app_pm_poll();
 }
 
 status_t app_init(void)
@@ -763,6 +1132,11 @@ status_t app_init(void)
 
 	printk("ink_panel boot\n");
 	button_long_press_ms_set_id(BTN_ID_CONFIRM, 5000U);
+
+	k_work_init_delayable(&s_wake_led_work, app_wake_led_work_fn);
+#if IS_ENABLED(CONFIG_INK_PANEL_EPD) && IS_ENABLED(CONFIG_INK_PANEL_W25Q)
+	k_work_init_delayable(&s_batt_ovl_work, app_batt_ovl_work_fn);
+#endif
 
 	if (npm1300_board_bringup() != 0) {
 		printk("npm1300 bringup fail\n");
@@ -800,6 +1174,9 @@ status_t app_init(void)
 	}
 
 	app_ble_heartbeat_start();
+	app_activity_bump();
+	s_vbus_was = npm1300_board_vbus_get();
+	app_batt_ovl_reschedule();
 
 	printk("ink_panel ok board=%s\n", board_config_get()->name);
 	return STATUS_OK;

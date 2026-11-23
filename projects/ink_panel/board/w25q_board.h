@@ -17,6 +17,12 @@ extern w25q_t g_w25q;
 /** GPIO + SPIM00 + w25q_init；成功返回 0 */
 int w25q_board_init(void);
 
+/** Deep Power-Down（0xB9）；休眠时调用 */
+void w25q_board_suspend(void);
+
+/** Release PD（0xAB）；成功返回 0 */
+int w25q_board_resume(void);
+
 #ifdef __cplusplus
 }
 #endif

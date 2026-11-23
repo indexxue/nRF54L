@@ -86,6 +86,17 @@ status_t epd_board_write_plane(uint8_t plane, uint16_t offset, const uint8_t *da
 /** 只读平面指针（供 CRC）；无效 plane 返回 NULL。 */
 const uint8_t *epd_board_plane_data(uint8_t plane);
 
+/**
+ * 软休眠：panel sleep（若可）→ SPI 脚 Hi-Z → 关 LDSW2。
+ * 忙时返回 STATUS_INVALID_STATE。
+ */
+status_t epd_board_rails_suspend(void);
+
+/** 恢复脚驱动 + 开轨；下次刷屏再 epd_init（s_panel_asleep）。 */
+status_t epd_board_rails_resume(void);
+
+bool epd_board_rails_suspended(void);
+
 #ifdef __cplusplus
 }
 #endif

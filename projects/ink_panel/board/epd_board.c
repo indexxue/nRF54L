@@ -92,6 +92,7 @@ static bool s_panel_asleep;    /* 上次 epd_sleep 后须再 init */
 static uint32_t s_fast_since_full;
 static atomic_t s_plane_lock;  /* 主机平面：CHUNK / 推显存 */
 static atomic_t s_panel_busy;  /* 面板物理全刷 / sleep */
+static atomic_t s_rails_suspended;
 
 K_THREAD_STACK_DEFINE(s_epd_stack, 4096);
 static struct k_thread s_epd_thread;
@@ -120,6 +121,10 @@ static status_t epd_board_queue_job(const epd_job_t *job)
 {
 	if (!s_ready) {
 		printk("epd: queue job rejected - not ready\n");
+		return STATUS_INVALID_STATE;
+	}
+	if (atomic_get(&s_rails_suspended) != 0) {
+		printk("epd: queue job rejected - rails suspended\n");
 		return STATUS_INVALID_STATE;
 	}
 	if (job == NULL) {
@@ -243,14 +248,37 @@ static void epd_delay_ms(uint32_t ms)
 
 static void epd_power_on(void)
 {
-	/* 只开 EPD 轨；触摸在刷屏窗口保持关，避免与 LDO2 抢 50mA 额度 */
+	/* 只开 EPD 轨；触摸电源由 CAP 路径单独管 */
 	npm1300_board_epd_power_set(true);
 	k_msleep(EPD_PWR_SETTLE_MS);
 }
 
 static void epd_power_off(void)
 {
-	/* 驱动回调：面板 deep-sleep 后不关轨；硬关只走 prepare 电源循环 */
+	/* 驱动回调：面板 deep-sleep 后不关轨；硬关只走 prepare / rails_suspend */
+}
+
+/** 关轨前把 MCU 脚改为输入，避免灌入未供电面板 */
+static void epd_pins_park(void)
+{
+#if !IS_ENABLED(CONFIG_INK_PANEL_EPD_SPIM)
+	if (gpio_is_ready_dt(&s_sck)) {
+		(void)gpio_pin_configure_dt(&s_sck, GPIO_INPUT);
+	}
+	if (gpio_is_ready_dt(&s_mosi)) {
+		(void)gpio_pin_configure_dt(&s_mosi, GPIO_INPUT);
+	}
+#endif
+	if (gpio_is_ready_dt(&s_cs)) {
+		(void)gpio_pin_configure_dt(&s_cs, GPIO_INPUT);
+	}
+	if (gpio_is_ready_dt(&s_dc)) {
+		(void)gpio_pin_configure_dt(&s_dc, GPIO_INPUT);
+	}
+	if (gpio_is_ready_dt(&s_rst)) {
+		(void)gpio_pin_configure_dt(&s_rst, GPIO_INPUT);
+	}
+	/* BUSY 保持输入上拉 */
 }
 
 /** BUSY 卡住或超时后：改固定延时，避免一直 BUSY_TIMEOUT 只剩白屏 */
@@ -292,8 +320,9 @@ static bool epd_want_full_prepare(void)
 /**
  * 刷屏前准备。force_rail：硬电源循环（全刷/异常）。
  * 快路径：轨已好且未深睡 → 跳过 power-cycle/init，收完包后尽快 kick。
+ * @return false：轨已休眠挂起，调用方应中止本次刷屏
  */
-static void epd_job_prepare(bool force_rail)
+static bool epd_job_prepare(bool force_rail)
 {
 	uint32_t waited = 0U;
 	epd_status_t ist;
@@ -302,6 +331,13 @@ static void epd_job_prepare(bool force_rail)
 	bool need_init;
 
 	npm1300_board_charge_inhibit_set(true);
+
+	/* 休眠关轨后禁止在 worker 内偷偷 resume；只许 app_pm_exit_sleep */
+	if (atomic_get(&s_rails_suspended) != 0) {
+		printk("epd: prepare aborted (rails suspended)\n");
+		npm1300_board_charge_inhibit_set(false);
+		return false;
+	}
 
 	rail_ok = npm1300_board_epd_rail_ok();
 	need_init = s_panel_asleep || !epd_is_initialized(&s_disp.epd);
@@ -354,6 +390,7 @@ static void epd_job_prepare(bool force_rail)
 		}
 		k_msleep(20);
 	}
+	return true;
 }
 
 static status_t epd_gpio_init(void)
@@ -506,6 +543,72 @@ bool epd_board_is_busy(void)
 	return epd_board_planes_busy() || epd_board_panel_busy();
 }
 
+bool epd_board_rails_suspended(void)
+{
+	return atomic_get(&s_rails_suspended) != 0;
+}
+
+status_t epd_board_rails_suspend(void)
+{
+	epd_job_t drop;
+
+	if (!s_ready) {
+		return STATUS_INVALID_STATE;
+	}
+	if (atomic_get(&s_rails_suspended) != 0) {
+		return STATUS_OK;
+	}
+
+	/* 先占位拒入队，再复查 busy，缩小与 worker 的窗口 */
+	atomic_set(&s_rails_suspended, 1);
+	if (epd_board_is_busy()) {
+		atomic_set(&s_rails_suspended, 0);
+		return STATUS_INVALID_STATE;
+	}
+	while (k_msgq_get(&s_epd_jobs, &drop, K_NO_WAIT) == 0) {
+		/* 排空残留 job，避免睡后再跑 */
+	}
+
+	/* 有轨且已 init：先 deep-sleep 再断轨 */
+	if (npm1300_board_epd_rail_ok() && epd_is_initialized(&s_disp.epd) &&
+	    !s_panel_asleep) {
+		(void)epd_sleep(&s_disp.epd);
+		s_panel_asleep = true;
+	}
+
+	epd_pins_park();
+	npm1300_board_epd_power_set(false);
+	if (npm1300_board_epd_rail_ok()) {
+		printk("epd: rails suspend FAIL (LDO2 still on)\n");
+		atomic_set(&s_rails_suspended, 0);
+		(void)epd_gpio_init();
+		return STATUS_FAIL;
+	}
+	printk("epd: rails suspend\n");
+	return STATUS_OK;
+}
+
+status_t epd_board_rails_resume(void)
+{
+	status_t st;
+
+	if (atomic_get(&s_rails_suspended) == 0) {
+		return STATUS_OK;
+	}
+
+	st = epd_gpio_init();
+	if (st != STATUS_OK) {
+		printk("epd: rails resume gpio fail\n");
+		return st;
+	}
+
+	epd_power_on();
+	s_panel_asleep = true;
+	atomic_set(&s_rails_suspended, 0);
+	printk("epd: rails resume\n");
+	return STATUS_OK;
+}
+
 /** 对齐 eink_tag epd_refresh_step */
 static status_t epd_refresh_step(const char *name, epd_display_status_t (*fn)(epd_display_t *),
 				 epd_color_t solid)
@@ -547,11 +650,20 @@ status_t epd_board_test_run(void)
 	}
 	atomic_set(&s_panel_busy, 1);
 
-	epd_job_prepare(true);
+	if (!epd_job_prepare(true)) {
+		atomic_set(&s_plane_lock, 0);
+		atomic_set(&s_panel_busy, 0);
+		return STATUS_INVALID_STATE;
+	}
 	st = epd_refresh_step("erase", epd_display_clear_screen, EPD_COLOR_WHITE);
 	if (st != STATUS_OK) {
 		epd_busy_fallback_fixed();
-		epd_job_prepare(true);
+		if (!epd_job_prepare(true)) {
+			npm1300_board_charge_inhibit_set(false);
+			atomic_set(&s_plane_lock, 0);
+			atomic_set(&s_panel_busy, 0);
+			return STATUS_INVALID_STATE;
+		}
 	}
 
 	epd_display_demo_bwr_fill(&s_disp, s_demo_title,
@@ -564,7 +676,12 @@ status_t epd_board_test_run(void)
 	st = epd_refresh_step("demo", epd_display_refresh, EPD_COLOR_WHITE);
 	if (st != STATUS_OK) {
 		epd_busy_fallback_fixed();
-		epd_job_prepare(true);
+		if (!epd_job_prepare(true)) {
+			npm1300_board_charge_inhibit_set(false);
+			atomic_set(&s_plane_lock, 0);
+			atomic_set(&s_panel_busy, 0);
+			return STATUS_INVALID_STATE;
+		}
 		st = epd_refresh_step("demo_retry", epd_display_refresh, EPD_COLOR_WHITE);
 	}
 	(void)epd_sleep(&s_disp.epd);
@@ -674,6 +791,9 @@ static status_t epd_board_refresh_core(uint8_t store_mode, uint8_t store_page)
 	if (!s_ready) {
 		return STATUS_INVALID_STATE;
 	}
+	if (atomic_get(&s_rails_suspended) != 0) {
+		return STATUS_INVALID_STATE;
+	}
 
 	atomic_set(&s_panel_busy, 1);
 
@@ -692,7 +812,10 @@ static status_t epd_board_refresh_core(uint8_t store_mode, uint8_t store_page)
 	for (pass = 0; pass < 2; pass++) {
 		bool use_full = force_full || (pass > 0);
 
-		epd_job_prepare(use_full);
+		if (!epd_job_prepare(use_full)) {
+			st = STATUS_INVALID_STATE;
+			break;
+		}
 		dst = epd_display_refresh_start(&s_disp);
 
 		if (dst != EPD_DISPLAY_OK) {
@@ -964,7 +1087,25 @@ static void epd_board_apply_home_overlay(void)
 		y = (uint16_t)(y + line_h);
 	}
 	if ((flags & PAGE_SLOT_OVL_BATT) != 0U) {
-		snprintk(line, sizeof(line), "BAT --");
+		uint16_t mv = 0U;
+		uint8_t pct = 0U;
+		bool charging = false;
+		bool full = false;
+
+		if (npm1300_board_batt_get(&mv, &pct, &charging, &full)) {
+			if (full) {
+				snprintk(line, sizeof(line), "BAT %u%% F",
+					 (unsigned)pct);
+			} else if (charging) {
+				snprintk(line, sizeof(line), "BAT %u%%+",
+					 (unsigned)pct);
+			} else {
+				snprintk(line, sizeof(line), "BAT %u%%",
+					 (unsigned)pct);
+			}
+		} else {
+			snprintk(line, sizeof(line), "BAT --");
+		}
 		epd_board_draw_string_halo(6U, y, line, EPD_COLOR_RED);
 	}
 

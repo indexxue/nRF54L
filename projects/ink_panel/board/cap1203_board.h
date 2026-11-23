@@ -35,6 +35,14 @@ void cap1203_board_poll(void);
  */
 uint8_t cap1203_board_nav_take(void);
 
+/** 禁 IRQ/work + 关触摸 LDO（休眠）；之后勿 poll */
+void cap1203_board_suspend(void);
+
+/** 开轨并重新 bringup；成功返回 0 */
+int cap1203_board_resume(void);
+
+bool cap1203_board_is_ready(void);
+
 #ifdef __cplusplus
 }
 #endif
